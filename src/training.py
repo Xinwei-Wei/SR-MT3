@@ -8,11 +8,11 @@ import shutil
 import time
 from collections import deque
 
-import data_generator
+# import data_generator
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-# from data_generation.data_generator import DataGenerator
+from data_generation.data_generator import DataGenerator
 # from util.MT3DataConvertor import MT3DataConvertor
 from matplotlib.gridspec import GridSpec
 from modules import evaluator
@@ -39,8 +39,8 @@ if __name__ == '__main__':
 	parser.add_argument('--continue_training_from', help='filepath to folder of an experiment to continue training from')
 	parser.add_argument('--exp_name', help='Name to give to the results folder')
 	args = parser.parse_args()
-	args.model_params = '/home/weixinwei/study/MT3-test/configs/models/mt3.pro.yaml'
-	args.task_params = '/home/weixinwei/study/MT3-test/configs/tasks/task1.1.yaml'
+	args.model_params = '/home/weixinwei/study/MTT-Trans/configs/models/mt3.pro.yaml'
+	args.task_params = '/home/weixinwei/study/MTT-Trans/configs/tasks/task1.yaml'
 	# args.continue_training_from = '/home/weixinwei/study/MT3-test/src/results/2023-03-31_211239'
 	# pdb.set_trace()
 	print(f'Task configuration file: {args.task_params}')
@@ -61,7 +61,7 @@ if __name__ == '__main__':
 	logger = Logger(log_path=f'{results_folder_path}/{exp_name}', save_output=False)
 	print(f"Saving results to folder {logger.log_path}")
 
-	# -------------------恢复
+	# -------------------恢复------------------------
 	logger.save_code_dependencies(project_root_path=os.path.realpath('../'))  # assuming this is ran from repo root
 
 	# Manually copy the configuration yaml file used for this experiment to the logger folder
@@ -76,13 +76,13 @@ if __name__ == '__main__':
 		except FileNotFoundError:
 			print(f'Path specified to continue training from does not exist: {args.continue_training_from}')
 			exit()
-	# ------------------------
+	# ------------------------------------------------
 
 	model = MOTT(params)
 	# mt3DataConvertor = MT3DataConvertor(args.task_params, args.model_params)
-	# data_generator = DataGenerator(params)
+	data_generator = DataGenerator(params)
 	# GetSeqBatch = data_generator.GetSeqBatch(params)
-	GetSeqBatch = data_generator.GetWinBatch(params)
+	# GetSeqBatch = data_generator.GetWinBatch(params)
 	mot_loss = MotLoss(params)
 	contrastive_loss = ContrastiveLoss(params)
 	false_loss = FalseMeasurementLoss(params)
@@ -176,10 +176,10 @@ if __name__ == '__main__':
 	for i_gradient_step in range(params.training.n_gradient_steps):
 		try:
 			# batch, labels, unique_ids = mt3DataConvertor.Get_batch()
-			# batch, labels, unique_ids, trajectories = data_generator.get_batch()
+			batch, labels, unique_ids, trajectories = data_generator.get_batch()
 			# batch, labels, unique_ids, trajectories = data_generator.get_polar_batch()
 			# batch, labels, unique_ids, trajectories = data_generator.get_radar_batch(0.5, 1)
-			batch, labels, unique_ids = next(GetSeqBatch)
+			# batch, labels, unique_ids = next(GetSeqBatch)
 			outputs, memory, aux_classifications, queries, attn_maps  = model.forward(batch, unique_ids)
 			loss_dict, indices = mot_loss.forward(outputs, labels, loss_type=params.loss.type)
 
