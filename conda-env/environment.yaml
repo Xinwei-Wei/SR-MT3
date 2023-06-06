@@ -1,0 +1,26 @@
+name: MT3
+channels:
+  - pytorch
+  - defaults
+dependencies:
+  - numpy=1.21.2=py38h20f2e39_0
+  - numpy-base=1.21.2=py38h79a1101_0
+  - pip=21.2.4=py38h06a4308_0
+  - python=3.8.13=h12debd9_0
+  - pip:
+    - h5py==3.6.0
+    - matplotlib==3.5.1
+    - matplotlib-inline==0.1.3
+    - nltk==3.7
+    - pandas==1.4.1
+    - pyyaml==6.0
+    - scipy==1.8.0
+    - seaborn==0.11.2
+    - spacy==3.2.4
+    - spacy-legacy==3.0.9
+    - spacy-loggers==1.0.2
+    - torch==1.8.0
+    - torchaudio==0.8.0
+    - torchvision==0.9.0
+    - unidecode==1.3.4
+
