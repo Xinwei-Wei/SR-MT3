@@ -8,12 +8,10 @@ import shutil
 import time
 from collections import deque
 
-# import data_generator
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from data_generation.data_generator import DataGenerator
-# from util.MT3DataConvertor import MT3DataConvertor
+from util.MT3DataConvertor import MT3DataConvertor
 from matplotlib.gridspec import GridSpec
 from modules import evaluator
 from modules.contrastive_loss import ContrastiveLoss
@@ -32,23 +30,20 @@ os.environ['CUDA_VISIBLE_DEVICES']='1'
 if __name__ == '__main__':
 	# Load CLI arguments
 	parser = argparse.ArgumentParser()
-	# parser.add_argument('-tp', '--task_params', help='filepath to configuration yaml file defining the task', required=True)
-	# parser.add_argument('-mp', '--model_params', help='filepath to configuration yaml file defining the model', required=True)
-	parser.add_argument('-tp', '--task_params', help='filepath to configuration yaml file defining the task')
 	parser.add_argument('-mp', '--model_params', help='filepath to configuration yaml file defining the model')
 	parser.add_argument('--continue_training_from', help='filepath to folder of an experiment to continue training from')
 	parser.add_argument('--exp_name', help='Name to give to the results folder')
 	args = parser.parse_args()
+	args.task_params = '/home/weixinwei/study/MTT-Trans/configs/models/task1.yaml'
 	args.model_params = '/home/weixinwei/study/MTT-Trans/configs/models/mt3.pro.yaml'
-	args.task_params = '/home/weixinwei/study/MTT-Trans/configs/tasks/task1.yaml'
 	# args.continue_training_from = '/home/weixinwei/study/MT3-test/src/results/2023-03-31_211239'
-	# pdb.set_trace()
 	print(f'Task configuration file: {args.task_params}')
 	print(f'Model configuration file: {args.model_params}')
 
 	# Load hyperparameters
 	params = load_yaml_into_dotdict(args.task_params)
 	params.update(load_yaml_into_dotdict(args.model_params))
+	params.txtPathList = ['']
 
 	if params.training.device == 'auto':
 		params.training.device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -79,10 +74,7 @@ if __name__ == '__main__':
 	# ------------------------------------------------
 
 	model = MOTT(params)
-	# mt3DataConvertor = MT3DataConvertor(args.task_params, args.model_params)
-	data_generator = DataGenerator(params)
-	# GetSeqBatch = data_generator.GetSeqBatch(params)
-	# GetSeqBatch = data_generator.GetWinBatch(params)
+	mt3DataConvertor = MT3DataConvertor(params.txtPathList, params.data_generation.n_timesteps, params.training.batch_size, params.training.device)
 	mot_loss = MotLoss(params)
 	contrastive_loss = ContrastiveLoss(params)
 	false_loss = FalseMeasurementLoss(params)
@@ -175,11 +167,7 @@ if __name__ == '__main__':
 
 	for i_gradient_step in range(params.training.n_gradient_steps):
 		try:
-			# batch, labels, unique_ids = mt3DataConvertor.Get_batch()
-			batch, labels, unique_ids, trajectories = data_generator.get_batch()
-			# batch, labels, unique_ids, trajectories = data_generator.get_polar_batch()
-			# batch, labels, unique_ids, trajectories = data_generator.get_radar_batch(0.5, 1)
-			# batch, labels, unique_ids = next(GetSeqBatch)
+			batch, labels, unique_ids = mt3DataConvertor.Get_batch()
 			outputs, memory, aux_classifications, queries, attn_maps  = model.forward(batch, unique_ids)
 			loss_dict, indices = mot_loss.forward(outputs, labels, loss_type=params.loss.type)
 
@@ -322,8 +310,7 @@ if __name__ == '__main__':
 							optimizer=optimizer,
 							scheduler=scheduler)
 			print("[INFO] Exiting...")
-			# mt3DataConvertor.fusionDataGenerator.pool.close()
-			data_generator.pool.close()
+			mt3DataConvertor.fusionDataGenerator.pool.close()
 			exit()
 
 		# Save checkpoint
@@ -337,20 +324,3 @@ if __name__ == '__main__':
 							scheduler=scheduler)
 
 	print("[INFO] Training finished.")
-	# # Evaluate afterwards
-
-	# # Setting seed for reproducibility
-	# params.data_generation.seed = 0
-	# # Only 1 training example per batch
-	# params.training.batch_size = 1
-	# # Reset data-generator for reproducibility
-	# data_generator = DataGenerator(params)
-
-	# og, pg, d = evaluator.evaluate_metrics(data_generator, model, params, mot_loss,  num_eval=1000, verbose=True)
-	# print("Finished running evaluation... please paste this in the spread-sheet")
-	# print(f"{np.mean(og['output'])} \t {np.var(og['output'])} \t {np.mean(pg['output'])} \t {np.var(pg['output'])} \t {np.mean(d['output'])} \t {np.var(d['output'])}")
-	# print("."*150)
-	# os.makedirs(os.path.join(logger.log_path, 'eval'), exist_ok=True)
-	# pickle.dump(og, open(os.path.join(logger.log_path, 'eval', 'original_gospa.p'), "wb"))
-	# pickle.dump(pg, open(os.path.join(logger.log_path, 'eval', 'prob_gospa.p'), "wb"))
-	# pickle.dump(d, open(os.path.join(logger.log_path, 'eval', 'detr.p'), "wb"))
