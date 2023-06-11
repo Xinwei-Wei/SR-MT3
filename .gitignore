@@ -2,6 +2,9 @@
 src/results/*
 src/results.nosync/*
 
+# Ignore source files
+source/*
+
 # Ignore .idea folders
 .idea/*
 
