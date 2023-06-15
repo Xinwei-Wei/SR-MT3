@@ -6,12 +6,13 @@ from torch import Tensor
 from util.misc import NestedTensor
 
 class MT3DataConvertor():
-	def __init__(self, txtPathList:list[str], n_timestep:int, batchSize:int, device = 'cuda', training = True) -> None:
+	def __init__(self, txtPathList:list[str], n_timestep:int, batchSize:int, frameSampleRate:int, device = 'cuda', training = True) -> None:
 		self.__nTimeStep = round(n_timestep)
 		self.__batchSize = round(batchSize)
+		self.__frameSampleRate = round(frameSampleRate)
 		self.__training = training
 		self.device = device
-		self.__txtDataConvertor = TXTDataConvertor(txtPathList, self.__nTimeStep, self.__batchSize, self.__training)
+		self.__txtDataConvertor = TXTDataConvertor(txtPathList, self.__nTimeStep, self.__batchSize, self.__frameSampleRate, self.__training)
 		
 	def Get_batch(self):
 		training_data, labels, unique_ids = self.__txtDataConvertor.GetMultipleTrainningData()

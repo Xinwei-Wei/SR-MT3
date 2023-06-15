@@ -1,10 +1,11 @@
 data_generation:
     seed: 0
-    n_timesteps: 20
+    n_timesteps: 100
+    frame_sample_rate: 5
     max_objects:  16
     dt: 10
     avg_gt_objects:  3.1 #3.1 computed via simulation, 1k samples
     n_avg_starting_objects: 4
     n_avg_false_measurements: 0
-    field_of_view_lb: -100000
-    field_of_view_ub: 100000
+    field_of_view_lb: -5000
+    field_of_view_ub: 25000

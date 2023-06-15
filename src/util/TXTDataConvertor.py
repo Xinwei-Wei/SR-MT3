@@ -44,9 +44,10 @@ class TXTInteracter:
 		return frame, uniqueID, sensorPosMeas, sensorPosTruth, targetPosMeas, targetPosTruth
 
 class TXTDataConvertor:
-	def __init__(self, txtPathList:list[str], n_timestep:int, batchSize:int, training = True) -> None:
+	def __init__(self, txtPathList:list[str], n_timestep:int, batchSize:int, frameSampleRate:int, training = True) -> None:
 		self.__nTimeStep = round(n_timestep)
 		self.__batchSize = round(batchSize)
+		self.__frameSampleRate = round(frameSampleRate)
 		self.__training = training
 		self.SetTxtInteracters(txtPathList)
 
@@ -55,15 +56,21 @@ class TXTDataConvertor:
 		self.InitMultipleTrainingData()
 
 	def InitMultipleTrainingData(self):
+		self.__lastFrame = []
 		self.__trainingData = []
+		self.__pannedData = []
 		self.__labels = []
 		self.__uniqueID = []
+		self.__trainID = []
 		self.__reOpenTimes = []
 		for i in range(self.__batchSize):
-			trainingData, label, uniqueID = self.__InitSingleTrainingData(self.__txtInteracter[i])
+			frame, trainingData, label, uniqueID = self.__InitSingleTrainingData(self.__txtInteracter[i])
+			self.__lastFrame.append(frame)
 			self.__trainingData.append(trainingData)
+			self.__pannedData.append(trainingData)
 			self.__labels.append(label)
 			self.__uniqueID.append(uniqueID)
+			self.__trainID.append(uniqueID)
 			self.__reOpenTimes.append(0)
 
 	def __InitSingleTrainingData(self, txtInteracter: TXTInteracter):
@@ -75,31 +82,49 @@ class TXTDataConvertor:
 			meas = np.r_[meas, np.c_[relativeMeas, np.zeros([relativeMeas.shape[0], 1]) + i]]
 			uids = np.r_[uids, uniqueID]
 		# end for
-		return meas, relativeTruth, uids
+		return frame, meas, relativeTruth, uids
 
 	def GetMultipleTrainningData(self):
-		for i in range(self.__batchSize):	# TODO Reflash at the end of a track
+		for i in range(self.__batchSize):
 			try:
-				self.__trainingData[i], self.__labels[i], self.__uniqueID[i] = \
-					self.__GetSingleTrainningData(self.__txtInteracter[i], self.__trainingData[i], self.__uniqueID[i])
+				self.__lastFrame[i], self.__trainingData[i], self.__pannedData[i], self.__labels[i], self.__uniqueID[i], self.__trainID[i] = \
+					self.__GetSingleTrainningData(self.__txtInteracter[i], self.__lastFrame[i], self.__trainingData[i], self.__uniqueID[i])
 			except IndexError:
 				self.__txtInteracter[i].ReOpenFile()
 				self.__reOpenTimes[i] += 1
 				print(f'Source file for Batch {i} Reopened {self.__reOpenTimes[i]}th times.')
-				self.__trainingData[i], self.__labels[i], self.__uniqueID[i] = \
-					self.__GetSingleTrainningData(self.__txtInteracter[i], self.__trainingData[i], self.__uniqueID[i])
-		return self.__trainingData, self.__labels, self.__uniqueID
+				self.__lastFrame[i], self.__trainingData[i], self.__pannedData[i], self.__labels[i], self.__uniqueID[i], self.__trainID[i] = \
+					self.__GetSingleTrainningData(self.__txtInteracter[i], self.__lastFrame[i], self.__trainingData[i], self.__uniqueID[i])
+		return self.__pannedData, self.__labels, self.__trainID
 
-	def __GetSingleTrainningData(self, txtInteracter: TXTInteracter, meas, uids):
+	def __GetSingleTrainningData(self, txtInteracter: TXTInteracter, lastFrame, measList, uids):
+		# Get data of current frame
 		frame, uniqueID, sensorPosMeas, sensorPosTruth, targetPosMeas, targetPosTruth = txtInteracter.ReadFrame()
 		relativeMeas, relativeTruth, uniqueID = self.__GetRelativeData(uniqueID, sensorPosMeas, sensorPosTruth, targetPosMeas, targetPosTruth)
-		deleteIdx = np.round(meas[:, 2]) == 0
-		meas = np.delete(meas, deleteIdx, 0)
+		# Append the current data and shift the data list temporal
+		deleteIdx = np.round(measList[:, 2]) == 0
+		measList = np.delete(measList, deleteIdx, 0)
 		uids = np.delete(uids, deleteIdx, 0)
-		meas[:, 2] = np.round(meas[:, 2]) - 1
-		meas = np.r_[meas, np.c_[relativeMeas, np.zeros([relativeMeas.shape[0], 1]) + self.__nTimeStep-1]]
+		measList[:, 2] = np.round(measList[:, 2]) - 1
+		measList = np.r_[measList, np.c_[relativeMeas, np.zeros([relativeMeas.shape[0], 1]) + self.__nTimeStep-1]]
 		uids = np.r_[uids, uniqueID]
-		return meas, relativeTruth, uids
+		# Reflash at the end of a track
+		if frame < lastFrame:
+			frame, measList, relativeTruth, uids = self.__InitSingleTrainingData(txtInteracter)
+		# Frame Sampling
+		trainMeas = measList.copy()
+		trainID = uids.copy()
+		dropIdx = np.mod((self.__nTimeStep - np.round(trainMeas[:, 2]) - 1), self.__frameSampleRate).astype(bool)
+		# dropIdx = np.mod(np.arange(trainMeas.shape[0]), self.__frameSampleRate).astype(bool)
+		# dropIdx = dropIdx[::-1]
+		trainMeas = np.delete(trainMeas, dropIdx, 0)
+		trainID = np.delete(trainID, dropIdx, 0)
+		trainMeas[:, 2] = np.floor_divide(trainMeas[:, 2], self.__frameSampleRate)
+		# Pan the measurements & ground truths spatial according to the current measurements
+		panValue = np.min(trainMeas[:, :2], 0)
+		trainMeas[:, :2] -= panValue
+		relativeTruth -= panValue
+		return frame, measList, trainMeas, relativeTruth, uids, trainID
 
 	def plotTrain(self):
 		frame, uniqueID, sensorPosMeas, sensorPosTruth, targetPosMeas, targetPosTruth = self.__txtInteracter[0].ReadFrame()

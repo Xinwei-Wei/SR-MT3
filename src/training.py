@@ -46,11 +46,26 @@ if __name__ == '__main__':
 	# Load hyperparameters
 	params = load_yaml_into_dotdict(args.task_params)
 	params.update(load_yaml_into_dotdict(args.model_params))
-	params.txtPathListRelative = ['Single_situation0.txt',
-								  'Single_situation1.txt',
-								  'Single_situation2.txt',
-								  'Single_situation3.txt',
-								  'Single_situation4.txt']
+	params.txtPathListRelative = ['Single_situation00.txt',
+								  'Single_situation01.txt',
+								  'Single_situation02.txt',
+								  'Single_situation03.txt',
+								  'Single_situation04.txt',
+								  'Single_situation05.txt',
+								  'Single_situation06.txt',
+								  'Single_situation07.txt',
+								  'Single_situation08.txt',
+								  'Single_situation09.txt',
+								  'Single_situation10.txt',
+								  'Single_situation11.txt',
+								  'Single_situation12.txt',
+								  'Single_situation13.txt',
+								  'Single_situation14.txt',
+								  'Single_situation15.txt',
+								  'Single_situation16.txt',
+								  'Single_situation17.txt',
+								  'Single_situation18.txt',
+								  'Single_situation19.txt']
 	params.txtPathList = [args.basePath + '/source/' + i for i in params.txtPathListRelative]
 	assert len(params.txtPathList) == params.training.batch_size, f'The number of txt files({len(params.txtPathList)}) should be equal to batch size({params.training.batch_size}).'
 
@@ -84,7 +99,11 @@ if __name__ == '__main__':
 		# ------------------------------------------------
 
 	model = MOTT(params)
-	mt3DataConvertor = MT3DataConvertor(params.txtPathList, params.data_generation.n_timesteps, params.training.batch_size, params.training.device)
+	mt3DataConvertor = MT3DataConvertor(params.txtPathList,
+				    					params.data_generation.n_timesteps * params.data_generation.frame_sample_rate,
+										params.training.batch_size,
+										params.data_generation.frame_sample_rate,
+										params.training.device)
 	# txtDataConvertor = TXTDataConvertor(params.txtPathList, params.data_generation.n_timesteps, params.training.batch_size)
 	mot_loss = MotLoss(params)
 	contrastive_loss = ContrastiveLoss(params)
