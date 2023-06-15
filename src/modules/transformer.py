@@ -17,13 +17,14 @@ Copy-pasted from Facebook's DETR Transformer modules with the following modifica
 
 
 class PreProccessor(nn.Module):
-    def __init__(self, d_model, d_detections, normalization_constant):
+    def __init__(self, d_model, d_detections, normalization_constant, normalization_base):
         super().__init__()
         self.linear1 = nn.Linear(d_detections, d_model, bias=False)
         self.normalization_constant = normalization_constant
+        self.normalization_base = normalization_base
     
     def forward(self, src):
-        out = src/self.normalization_constant
+        out = (src + self.normalization_base) / self.normalization_constant
         return self.linear1(out)
 
 # ------------ TRANSFORMER ENCODER ------------ #

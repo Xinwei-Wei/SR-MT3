@@ -21,9 +21,11 @@ class MOTT(nn.Module):
 		# self.temporal_encoder = LearnedPositionEncoder(params.totalArg.n_timesteps, params.arch.d_model)
 		self.temporal_encoder = LearnedPositionEncoder(params.data_generation.n_timesteps, params.arch.d_model)
 		self.measurement_normalization_factor = params.data_generation.field_of_view_ub - params.data_generation.field_of_view_lb
+		self.measurement_normalization_base = - params.data_generation.field_of_view_lb / self.measurement_normalization_factor
 		self.preprocessor = PreProccessor(params.arch.d_model,
 										  params.arch.d_detections,
-										  normalization_constant=self.measurement_normalization_factor)
+										  normalization_constant=self.measurement_normalization_factor,
+										  normalization_base=-params.data_generation.field_of_view_lb)
 		encoder_layer = TransformerEncoderLayer(params.arch.d_model,
 												nhead=params.arch.encoder.n_heads,
 												dim_feedforward=params.arch.encoder.dim_feedforward,
@@ -164,7 +166,7 @@ class MOTT(nn.Module):
 		# prepare memory for decoder
 		_, _, c = memory.shape
 		if self.two_stage:
-			normalized_meas = samples.tensors[:,:,:self.d_detections]/self.measurement_normalization_factor+0.5
+			normalized_meas = samples.tensors[:,:,:self.d_detections]/self.measurement_normalization_factor+self.measurement_normalization_base
 			output_memory, output_proposals = self.gen_encoder_output_proposals(memory.permute(1, 0, 2), mask, measurements=normalized_meas)
 
 			# hack implementation for two-stage Deformable DETR
@@ -207,7 +209,7 @@ class MOTT(nn.Module):
 			predicted_obj_prob = self.obj_classifier[lvl](hs[lvl])
 			tmp = self.state_classifier[lvl](hs[lvl])
 			tmp = tmp + reference
-			predicted_state = (tmp.sigmoid() - 0.5)*self.measurement_normalization_factor
+			predicted_state = (tmp.sigmoid() - self.measurement_normalization_base)*self.measurement_normalization_factor
 			# if torch.any(torch.isnan(predicted_state)):
 			#     pdb.set_trace()
 			pred_obj.append(predicted_obj_prob)
@@ -221,7 +223,7 @@ class MOTT(nn.Module):
 			out['aux_outputs'] = self._set_aux_loss(pred_obj, pred_state)
 
 		if self.two_stage:
-			enc_outputs_coord = (enc_outputs_coord_unact.sigmoid() - 0.5)*self.measurement_normalization_factor
+			enc_outputs_coord = (enc_outputs_coord_unact.sigmoid() - self.measurement_normalization_base)*self.measurement_normalization_factor
 			# Make sure padded measurements cannot be matched/are far away
 			enc_outputs_coord = enc_outputs_coord.masked_fill(mask.unsqueeze(-1).repeat(1,1,enc_outputs_coord.shape[-1]), self.measurement_normalization_factor*5)
 			out['enc_outputs'] = {'logits': enc_outputs_class, 'state': enc_outputs_coord}
