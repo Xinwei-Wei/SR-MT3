@@ -21,10 +21,12 @@ class MT3DataConvertor():
 			labels = [Tensor(l).to(torch.device(self.device)) for l in labels]
 			unique_ids = [list(u) for u in unique_ids]
 		else:
-			training_data = [self.__txtDataConvertor.GetMultiplePredictData(externalInput)]
-			labels = unique_ids = None
+			training_datak, panValue = self.__txtDataConvertor.GetMultiplePredictData(externalInput)
+			training_data = [training_datak]
+			labels = panValue
+			unique_ids = None
 			if training_data[0] is None:
-				return training_data, labels, unique_ids
+				return None, labels, unique_ids
 		# end if
 
 		# Pad training data

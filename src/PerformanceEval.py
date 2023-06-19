@@ -8,23 +8,57 @@ from scipy.optimize import linear_sum_assignment
 
 # TEST
 from util.TXTDataConvertor import TXTInteracter
-txtInteracter = TXTInteracter(f'{os.path.dirname(os.path.dirname(os.path.abspath(__file__)))}' + '/source/Single_situation0.txt')
+txtInteracter = TXTInteracter(f'{os.path.dirname(os.path.dirname(os.path.abspath(__file__)))}' + '/source/Single_situation00.txt')
+
+class TrackManagement:
+	def __init__(self, deadPeriod, maxObject, dimPred=3) -> None:
+		self.__deadPeriod = deadPeriod
+		self.__dimPred = dimPred
+		self.trackArray = np.zeros([maxObject, 2*dimPred+1])
+		self.trackArray = np.c_[np.arange(maxObject), self.trackArray]
+	
+	def PushPred(self, inputPred):
+		if (inputPred is None) or (inputPred.size == 0):
+			predIdx = []
+		else:
+			inputPred = inputPred[np.argsort(inputPred[:, 0])]				# sort via ID
+			predIdx = np.round(inputPred[:, 0]).astype(int)					# tracks which have measurement
+
+			# Velocity: 0 if flag==0; else delta position / time
+			self.trackArray[predIdx, 1+self.__dimPred:1+2*self.__dimPred] = self.trackArray[predIdx, -1, None] \
+																		  * (inputPred[:, 1:] - self.trackArray[predIdx, 1:1+self.__dimPred]) \
+																		  / (self.__deadPeriod - self.trackArray[predIdx, -1, None] + 1)
+			self.trackArray[predIdx, 1:1+self.__dimPred] = inputPred[:, 1:]
+			self.trackArray[predIdx, -1] = self.__deadPeriod
+
+		trackIdx = np.round(self.trackArray[:, -1]).astype(int) != 0		# All tracked Tracks
+		missIdx = trackIdx.copy()
+		missIdx[predIdx] = False											# Tracking but not meausured means missing
+		self.trackArray[missIdx, 1:1+self.__dimPred] += self.trackArray[missIdx, 1+self.__dimPred:1+2*self.__dimPred]	# position via velocity
+		self.trackArray[missIdx, -1] -= 1									# reduce life cycle
+
+		return self.trackArray[trackIdx, :-1].copy()
 
 class TrackPred:
 
-	def __init__(self, model, timeStep, device = 'cuda'):
+	def __init__(self, model, timeStep, frameSampleRate, device = 'cuda'):
 		self.__model = model
 		self.__timeStep = timeStep
+		self.__frameSampleRate = frameSampleRate
 		self.__device = device
-		self.mt3DataConvertor = MT3DataConvertor(txtPathList=None, n_timestep=self.__timeStep, batchSize=1, device=self.__device, training=False)
+		self.mt3DataConvertor = MT3DataConvertor(txtPathList=None, n_timestep=self.__timeStep, batchSize=1, frameSampleRate=self.__frameSampleRate, device=self.__device, training=False)
 
 	def __GetInputMeasurement(self):
-		_, _, sensorPosMeas, _, targetPosMeas, _ = txtInteracter.ReadFrame()	# TEST
-		return sensorPosMeas, targetPosMeas
+		_, uniqueID, sensorPosMeas, _, targetPosMeas, _ = txtInteracter.ReadFrame()	# TEST
+		return uniqueID, sensorPosMeas, targetPosMeas
 
-	def RelativeStatePred(self, existanceThreshold):
-		sensorPosMeas, targetPosMeas = self.__GetInputMeasurement()
-		batch, _, _ = self.mt3DataConvertor.Get_batch([sensorPosMeas, targetPosMeas])
+	def RelativeStatePred(self, existanceThreshold, externalInput = None):
+		if externalInput is not None:
+			batch, _, _ = self.mt3DataConvertor.Get_batch(externalInput)
+			targetPosMeas = externalInput[1]
+		else:
+			sensorPosMeas, targetPosMeas = self.__GetInputMeasurement()
+			batch, _, _ = self.mt3DataConvertor.Get_batch([sensorPosMeas, targetPosMeas])
 		if batch is not None:
 			output, _, _, _, _ = self.__model.forward(batch, None)
 			output_state = output['state'].detach()
@@ -34,7 +68,31 @@ class TrackPred:
 			return alive_output
 		return targetPosMeas
 	
-	def compute_hungarian_matching(self, outputs, targets):
+	def PredWithMeasAsso(self, externalInput = None, absTargetPos = False):
+		if externalInput is not None:
+			uid, sensorPosMeas, targetPosMeas = externalInput
+		else:
+			uid, sensorPosMeas, targetPosMeas = self.__GetInputMeasurement()
+
+		batch, panValue, _ = self.mt3DataConvertor.Get_batch([sensorPosMeas, targetPosMeas])
+
+		if batch is None:
+			outputState = np.c_[uid, self.__Sph2Cart(targetPosMeas), np.zeros([targetPosMeas.shape[0], 1]) + 2]
+		else:
+			output, _, _, _, _ = self.__model.forward(batch, None)
+			output_state = output['state'].detach().cpu() + torch.Tensor(panValue)
+			output_logits = output['logits'].detach().cpu().sigmoid().flatten(0,1)
+			meas = [torch.Tensor(self.__Sph2Cart(targetPosMeas))]
+			permutation_idx, cost = self.compute_hungarian_matching(output_state, output_logits, meas)
+			outIdx, tgtIdx = permutation_idx[0]
+			predIdx = outIdx[tgtIdx]
+			outputState = output_state.squeeze()[predIdx].numpy()
+			if absTargetPos:
+				outputState += sensorPosMeas[:-1]
+			outputState = np.c_[uid, outputState, np.zeros([outputState.shape[0], 1]) + 2]
+		return outputState
+	
+	def compute_hungarian_matching(self, output_state, output_logits, targets):
 		""" Performs the matching
 
 		Params:
@@ -54,9 +112,6 @@ class TrackPred:
 				len(index_i) = len(index_j) = min(num_queries, num_target_boxes)
 		"""
 
-		output_state = outputs['state']
-		output_logits = outputs['logits'].sigmoid().flatten(0,1)
-
 		bs, num_queries = output_state.shape[:2]
 
 		# We flatten to compute the cost matrices in a batch
@@ -69,8 +124,9 @@ class TrackPred:
 
 		# Compute the L2 cost
 		# [batch_size * num_queries, sum(num_objects)]
-		cost = torch.pow(input=torch.cdist(out, tgt, p=2), exponent=self.order)
-		cost -= output_logits
+		cost = torch.pow(input=torch.cdist(out, tgt, p=2), exponent=1)
+		# cost -= output_logits
+		cost *= (1 - output_logits)
 
 		# Reshape
 		# [batch_size, num_queries, sum(num_objects)]
@@ -82,9 +138,14 @@ class TrackPred:
 
 		# Perform hungarian matching using scipy linear_sum_assignment
 		with torch.no_grad():
-			indices = [linear_sum_assignment(
-				c[i]) for i, c in enumerate(cost.split(sizes, -1))]
-			permutation_idx = [(torch.as_tensor(i, dtype=torch.int64).to(torch.device(self.device)), torch.as_tensor(
-				j, dtype=torch.int64).to(self.device)) for i, j in indices]
+			indices = [linear_sum_assignment(c[i]) for i, c in enumerate(cost.split(sizes, -1))]
+			permutation_idx = [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
 
-		return permutation_idx, cost.to(self.device)
+		return permutation_idx, cost
+	
+	def __Sph2Cart(self, targetPosMeas):
+		targetThetaRad = targetPosMeas[:, [1]] * np.pi / 180.0
+		targetPhiRad = targetPosMeas[:, [2]] * np.pi / 180.0
+		targetXMeas = -targetPosMeas[:, [0]] * np.cos(targetPhiRad) * np.cos(targetThetaRad)
+		targetYMeas = -targetPosMeas[:, [0]] * np.cos(targetPhiRad) * np.sin(targetThetaRad)
+		return np.c_[targetXMeas, targetYMeas]

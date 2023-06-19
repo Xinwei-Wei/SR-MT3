@@ -99,9 +99,9 @@ class TXTDataConvertor:
 				self.__txtInteracter[i].ReOpenFile()
 				self.__reOpenTimes[i] += 1
 				print(f'Source file for Batch {i} Reopened {self.__reOpenTimes[i]}th times.')
-				self.__trainingData[i], self.__labels[i], self.__uniqueID[i] = \
-					self.__GetSingleTrainningData(self.__txtInteracter[i], self.__trainingData[i], self.__uniqueID[i])
-		return self.__trainingData, self.__labels, self.__uniqueID
+				self.__lastFrame[i], self.__trainingData[i], self.__pannedData[i], self.__labels[i], self.__uniqueID[i], self.__trainID[i] = \
+					self.__GetSingleTrainningData(self.__txtInteracter[i], self.__lastFrame[i], self.__trainingData[i], self.__uniqueID[i])
+		return self.__pannedData, self.__labels, self.__trainID
 	
 	def GetMultiplePredictData(self, externalInput:tuple):
 		'''
@@ -109,23 +109,25 @@ class TXTDataConvertor:
 			externalInput: tuple[sensorPosMeas, targetPosMeas]
 		'''
 
-		self.__trainingData, _, _ = \
-			self.__GetSingleTrainningData(None, self.__trainingData, None, externalInput)
+		_, self.__trainingData, self.__pannedData, panValue, _, _ = \
+			self.__GetSingleTrainningData(None, None, self.__trainingData, None, externalInput)
 		
 		if self.initFlag == 0:
 			if np.all(np.round(self.__trainingData[:, 2]) == 0):
 				self.initFlag = self.__nTimeStep
 			else:
-				return self.__trainingData
+				return self.__pannedData, panValue
 		
-		return None
+		return None, None
 
-	def __GetSingleTrainningData(self, txtInteracter: TXTInteracter, meas, uids, externalInput:tuple=None):
+	def __GetSingleTrainningData(self, txtInteracter: TXTInteracter, lastFrame, measList, uids, externalInput:tuple=None):
+		# Get data of current frame
 		if self.__training:
 			frame, uniqueID, sensorPosMeas, sensorPosTruth, targetPosMeas, targetPosTruth = txtInteracter.ReadFrame()
 			relativeMeas, relativeTruth, uniqueID = self.__GetRelativeData(uniqueID, sensorPosMeas, sensorPosTruth, targetPosMeas, targetPosTruth)
 		else:
-			relativeTruth = None
+			relativeTruth = trainID = None
+			frame = lastFrame
 			sensorPosMeas, targetPosMeas = externalInput
 			if targetPosMeas is not None:
 				relativeMeas, _, _ = self.__GetRelativeData(None, sensorPosMeas, None, targetPosMeas, None)
@@ -134,25 +136,48 @@ class TXTDataConvertor:
 			# end if
 		# end if
 		
+		# Predict data init
 		if self.initFlag != 0:
 			if relativeMeas is not None:
-				meas = np.r_[meas, np.c_[relativeMeas, np.zeros([relativeMeas.shape[0], 1]) + self.__nTimeStep - self.initFlag]]
+				measList = np.r_[measList, np.c_[relativeMeas, np.zeros([relativeMeas.shape[0], 1]) + self.__nTimeStep - self.initFlag]]
 			# end if
 			self.initFlag -= 1
-			return meas, relativeTruth, uids
+			return frame, measList, None, relativeTruth, uids, None
 
-		deleteIdx = np.round(meas[:, 2]) == 0
-		meas = np.delete(meas, deleteIdx, 0)
-		meas[:, 2] = np.round(meas[:, 2]) - 1
+		# Append the current data and shift the data list temporal
+		deleteIdx = np.round(measList[:, 2]) == 0
+		measList = np.delete(measList, deleteIdx, 0)
+		measList[:, 2] = np.round(measList[:, 2]) - 1
 
 		if relativeMeas is not None:
-			meas = np.r_[meas, np.c_[relativeMeas, np.zeros([relativeMeas.shape[0], 1]) + self.__nTimeStep-1]]
+			measList = np.r_[measList, np.c_[relativeMeas, np.zeros([relativeMeas.shape[0], 1]) + self.__nTimeStep-1]]
 
 		if self.__training:
 			uids = np.delete(uids, deleteIdx, 0)
 			uids = np.r_[uids, uniqueID]
 
-		return meas, relativeTruth, uids
+		# Reflash at the end of a track
+		if self.__training and frame < lastFrame:
+			frame, measList, relativeTruth, uids = self.__InitSingleTrainingData(txtInteracter)
+
+		# Frame Sampling
+		trainMeas = measList.copy()
+		dropIdx = np.mod((self.__nTimeStep - np.round(trainMeas[:, 2]) - 1), self.__frameSampleRate).astype(bool)
+		trainMeas = np.delete(trainMeas, dropIdx, 0)
+		trainMeas[:, 2] = np.floor_divide(trainMeas[:, 2], self.__frameSampleRate)
+		if self.__training:
+			trainID = uids.copy()
+			trainID = np.delete(trainID, dropIdx, 0)
+
+		# Pan the measurements & ground truths spatial according to the current measurements
+		panValue = np.min(trainMeas[:, :2], 0)
+		trainMeas[:, :2] -= panValue
+
+		if self.__training:
+			relativeTruth -= panValue
+			return frame, measList, trainMeas, relativeTruth, uids, trainID
+		else:
+			return frame, measList, trainMeas, panValue, uids, trainID
 
 	def plotTrain(self):
 		frame, uniqueID, sensorPosMeas, sensorPosTruth, targetPosMeas, targetPosTruth = self.__txtInteracter[0].ReadFrame()
