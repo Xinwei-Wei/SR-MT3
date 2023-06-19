@@ -49,7 +49,13 @@ class TXTDataConvertor:
 		self.__batchSize = round(batchSize)
 		self.__frameSampleRate = round(frameSampleRate)
 		self.__training = training
-		self.SetTxtInteracters(txtPathList)
+		if self.__training:
+			self.SetTxtInteracters(txtPathList)
+			self.initFlag = 0
+		else:
+			assert self.__batchSize == 1, f'Batch Size for Predict should be 1, but got {self.__batchSize}.'
+			self.__trainingData = np.zeros([0, 3])
+			self.initFlag = self.__nTimeStep
 
 	def SetTxtInteracters(self, txtPathList:list[str]):
 		self.__txtInteracter = [TXTInteracter(txtPathList[i], self.__training) for i in range(self.__batchSize)]
@@ -93,38 +99,60 @@ class TXTDataConvertor:
 				self.__txtInteracter[i].ReOpenFile()
 				self.__reOpenTimes[i] += 1
 				print(f'Source file for Batch {i} Reopened {self.__reOpenTimes[i]}th times.')
-				self.__lastFrame[i], self.__trainingData[i], self.__pannedData[i], self.__labels[i], self.__uniqueID[i], self.__trainID[i] = \
-					self.__GetSingleTrainningData(self.__txtInteracter[i], self.__lastFrame[i], self.__trainingData[i], self.__uniqueID[i])
-		return self.__pannedData, self.__labels, self.__trainID
+				self.__trainingData[i], self.__labels[i], self.__uniqueID[i] = \
+					self.__GetSingleTrainningData(self.__txtInteracter[i], self.__trainingData[i], self.__uniqueID[i])
+		return self.__trainingData, self.__labels, self.__uniqueID
+	
+	def GetMultiplePredictData(self, externalInput:tuple):
+		'''
+		param:
+			externalInput: tuple[sensorPosMeas, targetPosMeas]
+		'''
 
-	def __GetSingleTrainningData(self, txtInteracter: TXTInteracter, lastFrame, measList, uids):
-		# Get data of current frame
-		frame, uniqueID, sensorPosMeas, sensorPosTruth, targetPosMeas, targetPosTruth = txtInteracter.ReadFrame()
-		relativeMeas, relativeTruth, uniqueID = self.__GetRelativeData(uniqueID, sensorPosMeas, sensorPosTruth, targetPosMeas, targetPosTruth)
-		# Append the current data and shift the data list temporal
-		deleteIdx = np.round(measList[:, 2]) == 0
-		measList = np.delete(measList, deleteIdx, 0)
-		uids = np.delete(uids, deleteIdx, 0)
-		measList[:, 2] = np.round(measList[:, 2]) - 1
-		measList = np.r_[measList, np.c_[relativeMeas, np.zeros([relativeMeas.shape[0], 1]) + self.__nTimeStep-1]]
-		uids = np.r_[uids, uniqueID]
-		# Reflash at the end of a track
-		if frame < lastFrame:
-			frame, measList, relativeTruth, uids = self.__InitSingleTrainingData(txtInteracter)
-		# Frame Sampling
-		trainMeas = measList.copy()
-		trainID = uids.copy()
-		dropIdx = np.mod((self.__nTimeStep - np.round(trainMeas[:, 2]) - 1), self.__frameSampleRate).astype(bool)
-		# dropIdx = np.mod(np.arange(trainMeas.shape[0]), self.__frameSampleRate).astype(bool)
-		# dropIdx = dropIdx[::-1]
-		trainMeas = np.delete(trainMeas, dropIdx, 0)
-		trainID = np.delete(trainID, dropIdx, 0)
-		trainMeas[:, 2] = np.floor_divide(trainMeas[:, 2], self.__frameSampleRate)
-		# Pan the measurements & ground truths spatial according to the current measurements
-		panValue = np.min(trainMeas[:, :2], 0)
-		trainMeas[:, :2] -= panValue
-		relativeTruth -= panValue
-		return frame, measList, trainMeas, relativeTruth, uids, trainID
+		self.__trainingData, _, _ = \
+			self.__GetSingleTrainningData(None, self.__trainingData, None, externalInput)
+		
+		if self.initFlag == 0:
+			if np.all(np.round(self.__trainingData[:, 2]) == 0):
+				self.initFlag = self.__nTimeStep
+			else:
+				return self.__trainingData
+		
+		return None
+
+	def __GetSingleTrainningData(self, txtInteracter: TXTInteracter, meas, uids, externalInput:tuple=None):
+		if self.__training:
+			frame, uniqueID, sensorPosMeas, sensorPosTruth, targetPosMeas, targetPosTruth = txtInteracter.ReadFrame()
+			relativeMeas, relativeTruth, uniqueID = self.__GetRelativeData(uniqueID, sensorPosMeas, sensorPosTruth, targetPosMeas, targetPosTruth)
+		else:
+			relativeTruth = None
+			sensorPosMeas, targetPosMeas = externalInput
+			if targetPosMeas is not None:
+				relativeMeas, _, _ = self.__GetRelativeData(None, sensorPosMeas, None, targetPosMeas, None)
+			else:
+				relativeMeas = None
+			# end if
+		# end if
+		
+		if self.initFlag != 0:
+			if relativeMeas is not None:
+				meas = np.r_[meas, np.c_[relativeMeas, np.zeros([relativeMeas.shape[0], 1]) + self.__nTimeStep - self.initFlag]]
+			# end if
+			self.initFlag -= 1
+			return meas, relativeTruth, uids
+
+		deleteIdx = np.round(meas[:, 2]) == 0
+		meas = np.delete(meas, deleteIdx, 0)
+		meas[:, 2] = np.round(meas[:, 2]) - 1
+
+		if relativeMeas is not None:
+			meas = np.r_[meas, np.c_[relativeMeas, np.zeros([relativeMeas.shape[0], 1]) + self.__nTimeStep-1]]
+
+		if self.__training:
+			uids = np.delete(uids, deleteIdx, 0)
+			uids = np.r_[uids, uniqueID]
+
+		return meas, relativeTruth, uids
 
 	def plotTrain(self):
 		frame, uniqueID, sensorPosMeas, sensorPosTruth, targetPosMeas, targetPosTruth = self.__txtInteracter[0].ReadFrame()
@@ -135,8 +163,6 @@ class TXTDataConvertor:
 	def __GetRelativeData(self, uniqueID, sensorPosMeas, sensorPosTruth, targetPosMeas, targetPosTruth):
 		targetThetaRad = targetPosMeas[:, [1]] * np.pi / 180.0
 		targetPhiRad = targetPosMeas[:, [2]] * np.pi / 180.0
-		# targetXMeas = targetPosMeas[:, [0]] * np.sin(targetThetaRad) * np.cos(targetPhiRad)
-		# targetYMeas = targetPosMeas[:, [0]] * np.sin(targetThetaRad) * np.sin(targetPhiRad)
 		targetXMeas = -targetPosMeas[:, [0]] * np.cos(targetPhiRad) * np.cos(targetThetaRad)
 		targetYMeas = -targetPosMeas[:, [0]] * np.cos(targetPhiRad) * np.sin(targetThetaRad)
 		# relativeMeas = np.c_[targetXMeas, targetYMeas] + sensorPosMeas[:2]
@@ -145,7 +171,6 @@ class TXTDataConvertor:
 			# relativeTruth = targetPosTruth[:, :2]
 			relativeTruth =  targetPosTruth[:, :2] - sensorPosTruth[:2]
 			relativeTruth = np.delete(relativeTruth, uniqueID == -1, 0)
-			# uniqueID = np.delete(uniqueID, uniqueID == -1, 0)
 		else:
 			relativeTruth = None
 		return relativeMeas, relativeTruth, uniqueID

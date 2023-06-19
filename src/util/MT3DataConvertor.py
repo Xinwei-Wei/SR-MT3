@@ -14,32 +14,44 @@ class MT3DataConvertor():
 		self.device = device
 		self.__txtDataConvertor = TXTDataConvertor(txtPathList, self.__nTimeStep, self.__batchSize, self.__frameSampleRate, self.__training)
 		
-	def Get_batch(self):
-		training_data, labels, unique_ids = self.__txtDataConvertor.GetMultipleTrainningData()
+	def Get_batch(self, externalInput:tuple = None):
 
-		labels = [Tensor(l).to(torch.device(self.device)) for l in labels]
-		unique_ids = [list(u) for u in unique_ids]
+		if self.__training:
+			training_data, labels, unique_ids = self.__txtDataConvertor.GetMultipleTrainningData()
+			labels = [Tensor(l).to(torch.device(self.device)) for l in labels]
+			unique_ids = [list(u) for u in unique_ids]
+		else:
+			training_data = [self.__txtDataConvertor.GetMultiplePredictData(externalInput)]
+			labels = unique_ids = None
+			if training_data[0] is None:
+				return training_data, labels, unique_ids
+		# end if
 
 		# Pad training data
 		max_len = max(list(map(len, training_data)))
 		training_data, mask = self.__pad_to_batch_max(training_data, max_len)
 
 		# Pad unique ids
-		for i in range(len(unique_ids)):
-			unique_id = unique_ids[i]
-			n_items_to_add = max_len - len(unique_id)
-			unique_ids[i] = np.concatenate([unique_id, [-2] * n_items_to_add])[None, :]
-		unique_ids = np.concatenate(unique_ids)
+		if self.__training:
+			for i in range(len(unique_ids)):
+				unique_id = unique_ids[i]
+				n_items_to_add = max_len - len(unique_id)
+				unique_ids[i] = np.concatenate([unique_id, [-2] * n_items_to_add])[None, :]
+			unique_ids = np.concatenate(unique_ids)
+
+			unique_ids = Tensor(unique_ids).to(self.device)
+		# end if
 
 		training_nested_tensor = NestedTensor(Tensor(training_data).to(torch.device(self.device)),
 											  Tensor(mask).bool().to(torch.device(self.device)))
-		unique_ids = Tensor(unique_ids).to(self.device)
 
 		# 防止全0导致的NaN
-		for i in range(self.__batchSize):
-			if torch.all(training_nested_tensor.tensors[i, :, 2] == 0):
-				self.__txtDataConvertor.InitMultipleTrainingData()
-				return self.Get_batch()
+		if self.__training:
+			for i in range(self.__batchSize):
+				if torch.all(training_nested_tensor.tensors[i, :, 2] == 0):
+					self.__txtDataConvertor.InitMultipleTrainingData()
+					return self.Get_batch()
+		# end if
 
 		return training_nested_tensor, labels, unique_ids
 	
