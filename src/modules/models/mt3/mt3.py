@@ -67,6 +67,8 @@ class MOTT(nn.Module):
 		self.two_stage = params.arch.two_stage
 		self.d_model = params.arch.d_model
 
+		self.lastOut = None
+
 		# if two-stage, the last class_embed and bbox_embed is for region proposal generation
 		num_pred = (self.decoder.num_layers + 1) if self.two_stage else self.decoder.num_layers
 		if self.with_state_refine:
@@ -175,11 +177,22 @@ class MOTT(nn.Module):
 			enc_outputs_class = enc_outputs_class.masked_fill(mask.unsqueeze(-1), -100_000_000)
 			enc_outputs_coord_unact = self.state_classifier[self.decoder.num_layers](output_memory) + output_proposals
 
-			topk = self.num_queries
+			topk = self.num_queries // 2
 
 			topk_proposals_indices = torch.topk(enc_outputs_class[..., 0], topk, dim=1)[1]
 			topk_coords_unact = torch.gather(enc_outputs_coord_unact, 1, topk_proposals_indices.unsqueeze(-1).repeat(1, 1, self.d_detections))
 			topk_coords_unact = topk_coords_unact.detach()
+
+			if self.lastOut is not None:
+				self.lastOut['state'] = self.lastOut['state'] / self.measurement_normalization_factor + self.measurement_normalization_base
+				topk_last_pred_idx = torch.topk(self.lastOut['logits'], topk, dim=1)[1]
+				topk_last_pred_state = torch.gather(self.lastOut['state'], 1, topk_last_pred_idx.repeat(1, 1, self.d_detections))
+				topk_last_pred_state = topk_last_pred_state.detach()
+			else:
+				topk_last_pred_state = torch.zeros([bs, topk, self.d_detections]).to(topk_coords_unact.device)
+
+			topk_coords_unact = torch.cat((topk_coords_unact, topk_last_pred_state), axis=1)
+
 			reference_points = topk_coords_unact.sigmoid()
 			reference_points = reference_points.permute(1, 0, 2)
 
@@ -229,6 +242,8 @@ class MOTT(nn.Module):
 			out['enc_outputs'] = {'logits': enc_outputs_class, 'state': enc_outputs_coord}
 
 		memory = memory.permute(1, 0, 2)
+		self.lastOut = out
+
 		return out, memory, aux_classifications, hs, attn_maps.permute(1,0,2,3)
 
 	@torch.jit.unused
