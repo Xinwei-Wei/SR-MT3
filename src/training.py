@@ -22,11 +22,13 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from util.load_config_files import load_yaml_into_dotdict
 from util.logger import Logger
+from util.SetRandomSeed import SetupSeed
 from util.misc import save_checkpoint
 from util.plotting import (compute_avg_certainty, get_constrastive_ax,
                            get_false_ax, get_total_loss_ax, output_truth_plot)
 
 os.environ['CUDA_VISIBLE_DEVICES']='0'
+SetupSeed(3407)
 DEBUG_MODE = False
 
 if __name__ == '__main__':

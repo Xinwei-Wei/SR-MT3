@@ -16,6 +16,7 @@ arch:
     n_prediction_layers: 3
     with_state_refine: True
     two_stage: True
+    exist_threshold: 0.8
 
 loss:
     type: 'detr'

@@ -66,7 +66,7 @@ class MOTT(nn.Module):
 		self.with_state_refine = params.arch.with_state_refine
 		self.two_stage = params.arch.two_stage
 		self.d_model = params.arch.d_model
-
+		self.existThreshold = params.arch.exist_threshold
 		self.lastOut = None
 
 		# if two-stage, the last class_embed and bbox_embed is for region proposal generation
@@ -94,6 +94,7 @@ class MOTT(nn.Module):
 			self.pos_trans_norm = nn.LayerNorm(self.d_model * 2)
 
 			self.num_queries = params.arch.num_queries
+			self.reference_points_linear = nn.Linear(params.arch.d_model, 2)
 		else:
 			self.reference_points_linear = nn.Linear(params.arch.d_model, 2)
 
@@ -103,23 +104,8 @@ class MOTT(nn.Module):
 		for p in self.parameters():
 			if p.dim() > 1:
 				nn.init.xavier_uniform_(p)
-		if not self.two_stage:
-			nn.init.xavier_uniform_(self.reference_points_linear.weight.data, gain=1.0)
-			nn.init.constant_(self.reference_points_linear.bias.data, 0.)
-
-	def gen_encoder_output_proposals(self, memory, memory_padding_mask, measurements):
-		# Set proposed state as measurement location
-		output_proposals_valid = ((measurements > 0.01) & (measurements < 0.99)).all(-1, keepdim=True)
-		output_proposals = torch.log(measurements/(1-measurements))
-		output_proposals = output_proposals.masked_fill(memory_padding_mask.unsqueeze(-1), float('inf'))
-		output_proposals = output_proposals.masked_fill(~output_proposals_valid, float('inf'))
-		# Init out memory
-		output_memory = memory
-		output_memory = output_memory.masked_fill(memory_padding_mask.unsqueeze(-1), float(0))
-		output_memory = output_memory.masked_fill(~output_proposals_valid, float(0))
-		# Project encodings
-		output_memory = self.enc_output_norm(self.enc_output(output_memory))
-		return output_memory, output_proposals
+		nn.init.xavier_uniform_(self.reference_points_linear.weight.data, gain=1.0)
+		nn.init.constant_(self.reference_points_linear.bias.data, 0.)
 	
 	def get_proposal_pos_embed(self, proposals):
 		num_pos_feats = self.d_model*2/self.d_detections
@@ -168,38 +154,37 @@ class MOTT(nn.Module):
 		# prepare memory for decoder
 		_, _, c = memory.shape
 		if self.two_stage:
-			normalized_meas = samples.tensors[:,:,:self.d_detections]/self.measurement_normalization_factor+self.measurement_normalization_base
-			output_memory, output_proposals = self.gen_encoder_output_proposals(memory.permute(1, 0, 2), mask, measurements=normalized_meas)
-
-			# hack implementation for two-stage Deformable DETR
-			enc_outputs_class = self.obj_classifier[self.decoder.num_layers](output_memory)
-			# Set masked predictions to "0" probability
-			enc_outputs_class = enc_outputs_class.masked_fill(mask.unsqueeze(-1), -100_000_000)
-			enc_outputs_coord_unact = self.state_classifier[self.decoder.num_layers](output_memory) + output_proposals
-
 			topk = self.num_queries // 2
-
-			topk_proposals_indices = torch.topk(enc_outputs_class[..., 0], topk, dim=1)[1]
-			topk_coords_unact = torch.gather(enc_outputs_coord_unact, 1, topk_proposals_indices.unsqueeze(-1).repeat(1, 1, self.d_detections))
-			topk_coords_unact = topk_coords_unact.detach()
 
 			if self.lastOut is not None:
 				self.lastOut['state'] = self.lastOut['state'] / self.measurement_normalization_factor + self.measurement_normalization_base
+				tgt_mask = self.lastOut['logits'] < self.existThreshold
+
 				topk_last_pred_idx = torch.topk(self.lastOut['logits'], topk, dim=1)[1]
 				topk_last_pred_state = torch.gather(self.lastOut['state'], 1, topk_last_pred_idx.repeat(1, 1, self.d_detections))
+				tgt_mask = torch.gather(tgt_mask, 1, topk_last_pred_idx)
+
+				topk_last_pred_state[tgt_mask.repeat(1, 1, self.d_detections)] = -100_000_000
 				topk_last_pred_state = topk_last_pred_state.detach()
+				tgt_mask = tgt_mask.squeeze()
 			else:
-				topk_last_pred_state = torch.zeros([bs, topk, self.d_detections]).to(topk_coords_unact.device)
+				topk_last_pred_state = (torch.zeros([bs, topk, self.d_detections])-100_000_000).to(memory.device)
+				tgt_mask = torch.ones([bs, topk]).bool().to(memory.device)
 
-			topk_coords_unact = torch.cat((topk_coords_unact, topk_last_pred_state), axis=1)
-
-			reference_points = topk_coords_unact.sigmoid()
-			reference_points = reference_points.permute(1, 0, 2)
+			topk_coords_unact = topk_last_pred_state
 
 			pos_trans_out = self.pos_trans_norm(self.pos_trans(self.get_proposal_pos_embed(topk_coords_unact)))
-			query_embed, tgt = torch.split(pos_trans_out, c, dim=2)
+			query_embed_tgt, tgt = torch.split(pos_trans_out, c, dim=2)
+			query_embed_tgt = query_embed_tgt.permute(1, 0, 2)
 
-			query_embed = query_embed.permute(1, 0, 2)
+			# TODO Judge if query_embed should be changed.
+			query_embed = torch.cat((query_embed_tgt, query_embed[topk:]), axis=0)
+
+			# reference_points = topk_coords_unact.sigmoid()
+			
+			tgt = torch.cat((tgt, torch.zeros_like(tgt)), axis = 1)
+			tgt_mask = torch.cat((tgt_mask, torch.zeros([bs, topk]).bool().to(memory.device)), axis=1)
+			reference_points = self.reference_points_linear(query_embed).sigmoid()
 			tgt = tgt.permute(1, 0, 2)
 		else:
 			tgt = torch.zeros_like(query_embed)
@@ -207,7 +192,7 @@ class MOTT(nn.Module):
 
 		init_reference = reference_points.permute(1, 0, 2)
 
-		hs, attn_maps, inter_references = self.decoder(tgt, memory, memory_key_padding_mask=mask, pos=time_encoding, query_pos=query_embed, reference_points=reference_points)
+		hs, attn_maps, inter_references = self.decoder(tgt, memory, tgt_key_padding_mask=tgt_mask, memory_key_padding_mask=mask, pos=time_encoding, query_pos=query_embed, reference_points=reference_points)
 		hs = hs.transpose(1,2)
 		pred_obj = []
 		pred_state = []
@@ -223,8 +208,6 @@ class MOTT(nn.Module):
 			tmp = self.state_classifier[lvl](hs[lvl])
 			tmp = tmp + reference
 			predicted_state = (tmp.sigmoid() - self.measurement_normalization_base)*self.measurement_normalization_factor
-			# if torch.any(torch.isnan(predicted_state)):
-			#     pdb.set_trace()
 			pred_obj.append(predicted_obj_prob)
 			pred_state.append(predicted_state)
 
@@ -234,12 +217,6 @@ class MOTT(nn.Module):
 		out = {'state': pred_state[-1], 'logits': pred_obj[-1]}
 		if self.aux_loss:
 			out['aux_outputs'] = self._set_aux_loss(pred_obj, pred_state)
-
-		if self.two_stage:
-			enc_outputs_coord = (enc_outputs_coord_unact.sigmoid() - self.measurement_normalization_base)*self.measurement_normalization_factor
-			# Make sure padded measurements cannot be matched/are far away
-			enc_outputs_coord = enc_outputs_coord.masked_fill(mask.unsqueeze(-1).repeat(1,1,enc_outputs_coord.shape[-1]), self.measurement_normalization_factor*5)
-			out['enc_outputs'] = {'logits': enc_outputs_class, 'state': enc_outputs_coord}
 
 		memory = memory.permute(1, 0, 2)
 		self.lastOut = out
