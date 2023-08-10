@@ -68,6 +68,7 @@ class MOTT(nn.Module):
 		self.d_model = params.arch.d_model
 		self.existThreshold = params.arch.exist_threshold
 		self.lastOut = None
+		self.lastPanValue = None
 
 		# if two-stage, the last class_embed and bbox_embed is for region proposal generation
 		num_pred = (self.decoder.num_layers + 1) if self.two_stage else self.decoder.num_layers
@@ -123,7 +124,7 @@ class MOTT(nn.Module):
 		# N, L, num_pos_feats*dim
 		return pos
 
-	def forward(self, samples: NestedTensor, unique_ids):
+	def forward(self, samples: NestedTensor, panValue, unique_ids):
 		mapped_time_idx = torch.round(samples.tensors[:,:,-1] / self.params.data_generation.dt)
 		time_encoding = self.temporal_encoder(mapped_time_idx.long())
 		# bs, n_timesteps, d_detections + 1
@@ -155,6 +156,7 @@ class MOTT(nn.Module):
 		_, _, c = memory.shape
 		if self.two_stage:
 			topk = self.num_queries // 2
+			currentPanValue = torch.tensor(panValue, dtype=torch.float32, device=memory.device).unsqueeze(1).repeat(1, topk, 1)
 
 			if self.lastOut is not None:
 				self.lastOut['state'] = self.lastOut['state'] / self.measurement_normalization_factor + self.measurement_normalization_base
@@ -164,13 +166,15 @@ class MOTT(nn.Module):
 				topk_last_pred_state = torch.gather(self.lastOut['state'], 1, topk_last_pred_idx.repeat(1, 1, self.d_detections))
 				tgt_mask = torch.gather(tgt_mask, 1, topk_last_pred_idx)
 
+				topk_last_pred_state = topk_last_pred_state + self.lastPanValue - currentPanValue
 				topk_last_pred_state[tgt_mask.repeat(1, 1, self.d_detections)] = -100_000_000
 				topk_last_pred_state = topk_last_pred_state.detach()
-				tgt_mask = tgt_mask.squeeze()
+				tgt_mask = tgt_mask.squeeze(dim=2)
 			else:
 				topk_last_pred_state = (torch.zeros([bs, topk, self.d_detections])-100_000_000).to(memory.device)
 				tgt_mask = torch.ones([bs, topk]).bool().to(memory.device)
 
+			self.lastPanValue = currentPanValue
 			topk_coords_unact = topk_last_pred_state
 
 			pos_trans_out = self.pos_trans_norm(self.pos_trans(self.get_proposal_pos_embed(topk_coords_unact)))

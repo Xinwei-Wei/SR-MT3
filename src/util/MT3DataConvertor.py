@@ -17,7 +17,7 @@ class MT3DataConvertor():
 	def Get_batch(self, externalInput:tuple = None):
 
 		if self.__training:
-			training_data, labels, unique_ids = self.__txtDataConvertor.GetMultipleTrainningData()
+			training_data, panValue, labels, unique_ids = self.__txtDataConvertor.GetMultipleTrainningData()
 			labels = [Tensor(l).to(torch.device(self.device)) for l in labels]
 			unique_ids = [list(u) for u in unique_ids]
 		else:
@@ -55,7 +55,7 @@ class MT3DataConvertor():
 					return self.Get_batch()
 		# end if
 
-		return training_nested_tensor, labels, unique_ids
+		return training_nested_tensor, panValue, labels, unique_ids
 	
 	def __pad_to_batch_max(self, training_data, max_len):
 		batch_size = len(training_data)

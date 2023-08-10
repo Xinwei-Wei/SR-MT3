@@ -205,8 +205,8 @@ if __name__ == '__main__':
 
 	for i_gradient_step in range(params.training.n_gradient_steps):
 		try:
-			batch, labels, unique_ids = mt3DataConvertor.Get_batch()
-			outputs, memory, aux_classifications, queries, attn_maps  = model.forward(batch, unique_ids)
+			batch, panValue, labels, unique_ids = mt3DataConvertor.Get_batch()
+			outputs, memory, aux_classifications, queries, attn_maps  = model.forward(batch, panValue, unique_ids)
 			loss_dict, indices = mot_loss.forward(outputs, labels, loss_type=params.loss.type)
 
 			if params.loss.type == 'both':

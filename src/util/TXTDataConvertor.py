@@ -68,6 +68,7 @@ class TXTDataConvertor:
 		self.__labels = []
 		self.__uniqueID = []
 		self.__trainID = []
+		self.__panValue = []
 		self.__reOpenTimes = []
 		for i in range(self.__batchSize):
 			frame, trainingData, label, uniqueID = self.__InitSingleTrainingData(self.__txtInteracter[i])
@@ -77,6 +78,7 @@ class TXTDataConvertor:
 			self.__labels.append(label)
 			self.__uniqueID.append(uniqueID)
 			self.__trainID.append(uniqueID)
+			self.__panValue.append(0)
 			self.__reOpenTimes.append(0)
 
 	def __InitSingleTrainingData(self, txtInteracter: TXTInteracter):
@@ -93,15 +95,15 @@ class TXTDataConvertor:
 	def GetMultipleTrainningData(self):
 		for i in range(self.__batchSize):
 			try:
-				self.__lastFrame[i], self.__trainingData[i], self.__pannedData[i], self.__labels[i], self.__uniqueID[i], self.__trainID[i] = \
+				self.__lastFrame[i], self.__trainingData[i], self.__pannedData[i], self.__panValue[i], self.__labels[i], self.__uniqueID[i], self.__trainID[i]  = \
 					self.__GetSingleTrainningData(self.__txtInteracter[i], self.__lastFrame[i], self.__trainingData[i], self.__uniqueID[i])
 			except IndexError:
 				self.__txtInteracter[i].ReOpenFile()
 				self.__reOpenTimes[i] += 1
 				print(f'Source file for Batch {i} Reopened {self.__reOpenTimes[i]}th times.')
-				self.__lastFrame[i], self.__trainingData[i], self.__pannedData[i], self.__labels[i], self.__uniqueID[i], self.__trainID[i] = \
+				self.__lastFrame[i], self.__trainingData[i], self.__pannedData[i], self.__panValue[i], self.__labels[i], self.__uniqueID[i], self.__trainID[i] = \
 					self.__GetSingleTrainningData(self.__txtInteracter[i], self.__lastFrame[i], self.__trainingData[i], self.__uniqueID[i])
-		return self.__pannedData, self.__labels, self.__trainID
+		return self.__pannedData, self.__panValue, self.__labels, self.__trainID
 	
 	def GetMultiplePredictData(self, externalInput:tuple):
 		'''
@@ -175,7 +177,7 @@ class TXTDataConvertor:
 
 		if self.__training:
 			relativeTruth -= panValue
-			return frame, measList, trainMeas, relativeTruth, uids, trainID
+			return frame, measList, trainMeas, panValue, relativeTruth, uids, trainID
 		else:
 			return frame, measList, trainMeas, panValue, uids, trainID
 
