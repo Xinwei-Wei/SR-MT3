@@ -18,6 +18,11 @@ class MT3DataConvertor():
 
 		if self.__training:
 			training_data, panValue, labels, unique_ids = self.__txtDataConvertor.GetMultipleTrainningData()
+
+			for b in training_data:
+				if b is None:
+					return self.Get_batch()
+			
 			labels = [Tensor(l).to(torch.device(self.device)) for l in labels]
 			unique_ids = [list(u) for u in unique_ids]
 		else:
@@ -46,14 +51,6 @@ class MT3DataConvertor():
 
 		training_nested_tensor = NestedTensor(Tensor(training_data).to(torch.device(self.device)),
 											  Tensor(mask).bool().to(torch.device(self.device)))
-
-		# 防止全0导致的NaN
-		if self.__training:
-			for i in range(self.__batchSize):
-				if torch.all(training_nested_tensor.tensors[i, :, 2] == 0):
-					self.__txtDataConvertor.InitMultipleTrainingData()
-					return self.Get_batch()
-		# end if
 
 		return training_nested_tensor, panValue, labels, unique_ids
 	

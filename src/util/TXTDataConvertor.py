@@ -51,11 +51,10 @@ class TXTDataConvertor:
 		self.__training = training
 		if self.__training:
 			self.SetTxtInteracters(txtPathList)
-			self.initFlag = 0
 		else:
 			assert self.__batchSize == 1, f'Batch Size for Predict should be 1, but got {self.__batchSize}.'
 			self.__trainingData = np.zeros([0, 3])
-			self.initFlag = self.__nTimeStep
+			self.__initFlag = self.__nTimeStep
 
 	def SetTxtInteracters(self, txtPathList:list[str]):
 		self.__txtInteracter = [TXTInteracter(txtPathList[i], self.__training) for i in range(self.__batchSize)]
@@ -70,39 +69,29 @@ class TXTDataConvertor:
 		self.__trainID = []
 		self.__panValue = []
 		self.__reOpenTimes = []
+		self.__initFlag = []
 		for i in range(self.__batchSize):
-			frame, trainingData, label, uniqueID = self.__InitSingleTrainingData(self.__txtInteracter[i])
-			self.__lastFrame.append(frame)
-			self.__trainingData.append(trainingData)
-			self.__pannedData.append(trainingData)
-			self.__labels.append(label)
-			self.__uniqueID.append(uniqueID)
-			self.__trainID.append(uniqueID)
+			self.__lastFrame.append(0)
+			self.__trainingData.append(np.zeros([0, 3]))
+			self.__pannedData.append(0)
+			self.__labels.append(0)
+			self.__uniqueID.append(np.array([]))
+			self.__trainID.append(0)
 			self.__panValue.append(0)
 			self.__reOpenTimes.append(0)
-
-	def __InitSingleTrainingData(self, txtInteracter: TXTInteracter):
-		meas = np.zeros([0, 3])
-		uids = np.array([])
-		for i in range(self.__nTimeStep):	# TODO Training judgement
-			frame, uniqueID, sensorPosMeas, sensorPosTruth, targetPosMeas, targetPosTruth = txtInteracter.ReadFrame()
-			relativeMeas, relativeTruth, uniqueID = self.__GetRelativeData(uniqueID, sensorPosMeas, sensorPosTruth, targetPosMeas, targetPosTruth)
-			meas = np.r_[meas, np.c_[relativeMeas, np.zeros([relativeMeas.shape[0], 1]) + i]]
-			uids = np.r_[uids, uniqueID]
-		# end for
-		return frame, meas, relativeTruth, uids
+			self.__initFlag.append(self.__nTimeStep)
 
 	def GetMultipleTrainningData(self):
 		for i in range(self.__batchSize):
 			try:
-				self.__lastFrame[i], self.__trainingData[i], self.__pannedData[i], self.__panValue[i], self.__labels[i], self.__uniqueID[i], self.__trainID[i]  = \
-					self.__GetSingleTrainningData(self.__txtInteracter[i], self.__lastFrame[i], self.__trainingData[i], self.__uniqueID[i])
+				self.__lastFrame[i], self.__initFlag[i], self.__trainingData[i], self.__pannedData[i], self.__panValue[i], self.__labels[i], self.__uniqueID[i], self.__trainID[i]  = \
+					self.__GetSingleTrainningData(self.__txtInteracter[i], self.__lastFrame[i], self.__initFlag[i], self.__trainingData[i], self.__uniqueID[i])
 			except IndexError:
 				self.__txtInteracter[i].ReOpenFile()
 				self.__reOpenTimes[i] += 1
 				print(f'Source file for Batch {i} Reopened {self.__reOpenTimes[i]}th times.')
-				self.__lastFrame[i], self.__trainingData[i], self.__pannedData[i], self.__panValue[i], self.__labels[i], self.__uniqueID[i], self.__trainID[i] = \
-					self.__GetSingleTrainningData(self.__txtInteracter[i], self.__lastFrame[i], self.__trainingData[i], self.__uniqueID[i])
+				self.__lastFrame[i], self.__initFlag[i], self.__trainingData[i], self.__pannedData[i], self.__panValue[i], self.__labels[i], self.__uniqueID[i], self.__trainID[i] = \
+					self.__GetSingleTrainningData(self.__txtInteracter[i], self.__lastFrame[i], self.__initFlag[i], self.__trainingData[i], self.__uniqueID[i])
 		return self.__pannedData, self.__panValue, self.__labels, self.__trainID
 	
 	def GetMultiplePredictData(self, externalInput:tuple):
@@ -114,15 +103,15 @@ class TXTDataConvertor:
 		_, self.__trainingData, self.__pannedData, panValue, _, _ = \
 			self.__GetSingleTrainningData(None, None, self.__trainingData, None, externalInput)
 		
-		if self.initFlag == 0:
+		if self.__initFlag == 0:
 			if np.all(np.round(self.__trainingData[:, 2]) == 0):
-				self.initFlag = self.__nTimeStep
+				self.__initFlag = self.__nTimeStep
 			else:
 				return self.__pannedData, panValue
 		
 		return None, None
 
-	def __GetSingleTrainningData(self, txtInteracter: TXTInteracter, lastFrame, measList, uids, externalInput:tuple=None):
+	def __GetSingleTrainningData(self, txtInteracter: TXTInteracter, lastFrame, initFlag, measList, uids, externalInput:tuple=None):
 		# Get data of current frame
 		if self.__training:
 			frame, uniqueID, sensorPosMeas, sensorPosTruth, targetPosMeas, targetPosTruth = txtInteracter.ReadFrame()
@@ -137,34 +126,34 @@ class TXTDataConvertor:
 				relativeMeas = None
 			# end if
 		# end if
-		
-		# Predict data init
-		if self.initFlag != 0:
-			if relativeMeas is not None:
-				measList = np.r_[measList, np.c_[relativeMeas, np.zeros([relativeMeas.shape[0], 1]) + self.__nTimeStep - self.initFlag]]
-			# end if
-			self.initFlag -= 1
-			return frame, measList, None, relativeTruth, uids, None
-
-		# Append the current data and shift the data list temporal
-		deleteIdx = np.round(measList[:, 2]) == 0
-		measList = np.delete(measList, deleteIdx, 0)
-		measList[:, 2] = np.round(measList[:, 2]) - 1
-
-		if relativeMeas is not None:
-			measList = np.r_[measList, np.c_[relativeMeas, np.zeros([relativeMeas.shape[0], 1]) + self.__nTimeStep-1]]
-
-		if self.__training:
-			uids = np.delete(uids, deleteIdx, 0)
-			uids = np.r_[uids, uniqueID]
 
 		# Reflash at the end of a track
 		if self.__training and frame < lastFrame:
-			frame, measList, relativeTruth, uids = self.__InitSingleTrainingData(txtInteracter)
+			initFlag = self.__nTimeStep
+			measList = np.zeros([0, 3])
+			uids = np.array([])
+
+		if initFlag == 0:
+			# Append the current data and shift the data list temporal
+			deleteIdx = np.round(measList[:, 2]) == 0
+			measList = np.delete(measList, deleteIdx, 0)
+			measList[:, 2] = np.round(measList[:, 2]) - 1
+
+			if relativeMeas is not None:
+				measList = np.r_[measList, np.c_[relativeMeas, np.zeros([relativeMeas.shape[0], 1]) + self.__nTimeStep - 1]]
+
+			if self.__training:
+				uids = np.delete(uids, deleteIdx, 0)
+				uids = np.r_[uids, uniqueID]
+		else:
+			measList = np.r_[measList, np.c_[relativeMeas, np.zeros([relativeMeas.shape[0], 1]) + self.__nTimeStep - initFlag]]
+			if self.__training:
+				uids = np.r_[uids, uniqueID]
 
 		# Frame Sampling
 		trainMeas = measList.copy()
-		dropIdx = np.mod((self.__nTimeStep - np.round(trainMeas[:, 2]) - 1), self.__frameSampleRate).astype(bool)
+		dropBase = int(round(max(trainMeas[:, 2]))) if initFlag != 0 else self.__nTimeStep - 1
+		dropIdx = np.mod((dropBase - np.round(trainMeas[:, 2])), self.__frameSampleRate).astype(bool)
 		trainMeas = np.delete(trainMeas, dropIdx, 0)
 		trainMeas[:, 2] = np.floor_divide(trainMeas[:, 2], self.__frameSampleRate)
 		if self.__training:
@@ -172,12 +161,20 @@ class TXTDataConvertor:
 			trainID = np.delete(trainID, dropIdx, 0)
 
 		# Pan the measurements & ground truths spatial according to the current measurements
-		panValue = np.min(trainMeas[:, :2], 0)
-		trainMeas[:, :2] -= panValue
+		if trainMeas.shape[0] != 0:
+			panValue = np.min(trainMeas[:, :2], 0)
+			trainMeas[:, :2] -= panValue
+		else:
+			panValue = np.zeros([1, 2])
+
+		if initFlag != 0:
+			if int(round(max(trainMeas[:, 2]))) < 2:
+				trainMeas = trainID = None
+			initFlag -= 1
 
 		if self.__training:
 			relativeTruth -= panValue
-			return frame, measList, trainMeas, panValue, relativeTruth, uids, trainID
+			return frame, initFlag, measList, trainMeas, panValue, relativeTruth, uids, trainID
 		else:
 			return frame, measList, trainMeas, panValue, uids, trainID
 
