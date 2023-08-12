@@ -28,10 +28,11 @@ class MT3DataConvertor():
 		else:
 			training_datak, panValue = self.__txtDataConvertor.GetMultiplePredictData(externalInput)
 			training_data = [training_datak]
-			labels = panValue
+			panValue = [panValue]
+			labels = None
 			unique_ids = None
 			if training_data[0] is None:
-				return None, labels, unique_ids
+				return None, panValue, labels, unique_ids
 		# end if
 
 		# Pad training data

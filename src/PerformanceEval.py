@@ -74,12 +74,12 @@ class TrackPred:
 		else:
 			uid, sensorPosMeas, targetPosMeas = self.__GetInputMeasurement()
 
-		batch, panValue, _ = self.mt3DataConvertor.Get_batch([sensorPosMeas, targetPosMeas])
+		batch, panValue, _, _ = self.mt3DataConvertor.Get_batch([sensorPosMeas, targetPosMeas])
 
 		if batch is None:
 			outputState = np.c_[uid, self.__Sph2Cart(targetPosMeas), np.zeros([targetPosMeas.shape[0], 1]) + 2]
 		else:
-			output, _, _, _, _ = self.__model.forward(batch, None)
+			output, _, _, _, _ = self.__model.forward(batch, panValue, None)
 			output_state = output['state'].detach().cpu() + torch.Tensor(panValue)
 			output_logits = output['logits'].detach().cpu().sigmoid().flatten(0,1)
 			meas = [torch.Tensor(self.__Sph2Cart(targetPosMeas))]

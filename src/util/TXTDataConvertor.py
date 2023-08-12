@@ -100,16 +100,10 @@ class TXTDataConvertor:
 			externalInput: tuple[sensorPosMeas, targetPosMeas]
 		'''
 
-		_, self.__trainingData, self.__pannedData, panValue, _, _ = \
-			self.__GetSingleTrainningData(None, None, self.__trainingData, None, externalInput)
+		_, self.__initFlag, self.__trainingData, self.__pannedData, panValue, _, _, _ = \
+			self.__GetSingleTrainningData(None, None, self.__initFlag, self.__trainingData, None, externalInput)
 		
-		if self.__initFlag == 0:
-			if np.all(np.round(self.__trainingData[:, 2]) == 0):
-				self.__initFlag = self.__nTimeStep
-			else:
-				return self.__pannedData, panValue
-		
-		return None, None
+		return self.__pannedData, panValue
 
 	def __GetSingleTrainningData(self, txtInteracter: TXTInteracter, lastFrame, initFlag, measList, uids, externalInput:tuple=None):
 		# Get data of current frame
@@ -174,9 +168,8 @@ class TXTDataConvertor:
 
 		if self.__training:
 			relativeTruth -= panValue
-			return frame, initFlag, measList, trainMeas, panValue, relativeTruth, uids, trainID
-		else:
-			return frame, measList, trainMeas, panValue, uids, trainID
+			
+		return frame, initFlag, measList, trainMeas, panValue, relativeTruth, uids, trainID
 
 	def plotTrain(self):
 		frame, uniqueID, sensorPosMeas, sensorPosTruth, targetPosMeas, targetPosTruth = self.__txtInteracter[0].ReadFrame()
