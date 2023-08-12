@@ -1,14 +1,16 @@
 from __future__ import annotations
 import matplotlib.pyplot as plt
+import scipy.io as scio
 import numpy as np
 import torch
 import os
+import warnings
+from util.TXTDataConvertor import TXTInteracter
 from util.MT3DataConvertor import MT3DataConvertor
 from scipy.optimize import linear_sum_assignment
 
 # TEST
-from util.TXTDataConvertor import TXTInteracter
-txtInteracter = TXTInteracter(f'{os.path.dirname(os.path.dirname(os.path.abspath(__file__)))}' + '/source/Single_situation00.txt')
+# txtInteracter = TXTInteracter('')
 
 class TrackManagement:
 	def __init__(self, deadPeriod, maxObject, dimPred=3) -> None:
@@ -49,7 +51,7 @@ class TrackPred:
 		self.mt3DataConvertor = MT3DataConvertor(txtPathList=None, n_timestep=self.__timeStep, batchSize=1, frameSampleRate=self.__frameSampleRate, device=self.__device, training=False)
 
 	def __GetInputMeasurement(self):
-		_, uniqueID, sensorPosMeas, _, targetPosMeas, _ = txtInteracter.ReadFrame()	# TEST
+		_, uniqueID, sensorPosMeas, _, targetPosMeas, _ = None	# txtInteracter.ReadFrame()
 		return uniqueID, sensorPosMeas, targetPosMeas
 
 	def RelativeStatePred(self, existanceThreshold, externalInput = None):
@@ -79,18 +81,74 @@ class TrackPred:
 		if batch is None:
 			outputState = np.c_[uid, self.__Sph2Cart(targetPosMeas), np.zeros([targetPosMeas.shape[0], 1]) + 2]
 		else:
+			# Predict
 			output, _, _, _, _ = self.__model.forward(batch, panValue, None)
 			output_state = output['state'].detach().cpu() + torch.Tensor(panValue)
 			output_logits = output['logits'].detach().cpu().sigmoid().flatten(0,1)
+
+			# Associate results
 			meas = [torch.Tensor(self.__Sph2Cart(targetPosMeas))]
 			permutation_idx, cost = self.compute_hungarian_matching(output_state, output_logits, meas)
 			outIdx, tgtIdx = permutation_idx[0]
-			predIdx = outIdx[tgtIdx]
+			predIdx = outIdx[torch.argsort(tgtIdx)]
 			outputState = output_state.squeeze()[predIdx].numpy()
+
 			if absTargetPos:
 				outputState += sensorPosMeas[:-1]
+			
 			outputState = np.c_[uid, outputState, np.zeros([outputState.shape[0], 1]) + 2]
+
 		return outputState
+	
+	def PredForEval(self, srcFile, epoch, matFile=None):
+		txtInteracter = TXTInteracter(srcFile, training=True)
+		stateList = []
+		labelList = []
+		for i in range(epoch):
+			# Gen meas data
+			try:
+				_, uniqueID, sensorPosMeas, sensorPosTruth, targetPosMeas, targetPosTruth = txtInteracter.ReadFrame()
+			except IndexError:
+				warnings.warn(f'Source File has no new data, prediction ended. Current Epoch: {i}, Expected Epoch: {epoch}.')
+				break
+			batch, panValue, _, _ = self.mt3DataConvertor.Get_batch([sensorPosMeas, targetPosMeas])
+
+			if batch is not None:
+				# Predict
+				output, _, _, _, _ = self.__model.forward(batch, panValue, None)
+				output_state = output['state'].detach().cpu() + torch.Tensor(panValue)
+				output_logits = output['logits'].detach().cpu().sigmoid().flatten(0,1)
+
+				# Gen ground truth
+				relativeTruth =  targetPosTruth[:, :2] - sensorPosTruth[:2]
+				relativeTruth = np.delete(relativeTruth, uniqueID == -1, 0)
+				uniqueID = np.delete(uniqueID, uniqueID == -1, 0)
+				labels = [torch.Tensor(relativeTruth)]
+
+				# Associate results
+				permutation_idx, cost = self.compute_hungarian_matching(output_state, None, labels)
+				outIdx, tgtIdx = permutation_idx[0]
+				predIdx = outIdx[torch.argsort(tgtIdx)]
+				outputState = output_state.squeeze()[predIdx].numpy()
+
+				# Sort results
+				outputState = np.c_[uniqueID, outputState]
+				outputState = outputState[np.argsort(uniqueID)]
+				outputLabel = np.c_[uniqueID, relativeTruth]
+				outputLabel = outputLabel[np.argsort(uniqueID)]
+			else:
+				outputState = outputLabel = np.nan
+			
+			stateList.append(outputState)
+			labelList.append(outputLabel)
+
+		if matFile is not None:
+			try:
+				scio.savemat(matFile, {'Predict': stateList, 'Truth': labelList})
+			except Exception:
+				warnings.warn('Error occured, CANNOT save MAT file, please save the returned data manually.')
+		
+		return stateList, labelList
 	
 	def compute_hungarian_matching(self, output_state, output_logits, targets):
 		""" Performs the matching
@@ -126,7 +184,8 @@ class TrackPred:
 		# [batch_size * num_queries, sum(num_objects)]
 		cost = torch.pow(input=torch.cdist(out, tgt, p=2), exponent=1)
 		# cost -= output_logits
-		cost *= (1 - output_logits)
+		if output_logits is not None:
+			cost *= (1 - output_logits)
 
 		# Reshape
 		# [batch_size, num_queries, sum(num_objects)]

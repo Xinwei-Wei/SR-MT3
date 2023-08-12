@@ -46,6 +46,7 @@ while True:
 		# Predict States
 		outputState = trackPred.PredWithMeasAsso([uniqueID, sensorPosMeas, targetPosMeas], absTargetPos=False)
 		outputState = trackManagement.PushPred(outputState)
+		# pred, truth = trackPred.PredForEval(srcFile='.txt', epoch=10000, matFile='.mat')
 
 		# Generate Output & Reply
 		if outputState is not None:
