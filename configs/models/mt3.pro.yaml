@@ -31,7 +31,7 @@ loss:
 training:
     n_gradient_steps: 1000000
     learning_rate: 0.00005 #0.00005
-    batch_size: 20
+    batch_size: 16
     reduce_lr_patience: 50000
     reduce_lr_factor: 0.25
     checkpoint_interval: 200000 # after how many gradient steps to save the weights

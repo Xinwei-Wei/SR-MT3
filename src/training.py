@@ -12,7 +12,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from util.MT3DataConvertor import MT3DataConvertor
-from util.TXTDataConvertor import TXTDataConvertor
 from matplotlib.gridspec import GridSpec
 from modules import evaluator
 from modules.contrastive_loss import ContrastiveLoss
@@ -39,37 +38,15 @@ if __name__ == '__main__':
 	parser.add_argument('--exp_name', help='Name to give to the results folder')
 	args = parser.parse_args()
 	args.basePath =  os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-	args.task_params = args.basePath  + '/configs/tasks/' + 'task1.yaml'
+	args.task_params = args.basePath  + '/configs/tasks/' + 'scen1.1.yaml'
 	args.model_params = args.basePath  + '/configs/models/' + 'mt3.pro.yaml'
-	# args.continue_training_from = args.basePath + '/src/results/' + '2023-03-31_211239'
+	# args.continue_training_from = args.basePath + '/src/results/' + ''
 	print(f'Task configuration file: {args.task_params}')
 	print(f'Model configuration file: {args.model_params}')
 
 	# Load hyperparameters
 	params = load_yaml_into_dotdict(args.task_params)
 	params.update(load_yaml_into_dotdict(args.model_params))
-	params.txtPathListRelative = ['Single_situation00.txt',
-								  'Single_situation01.txt',
-								  'Single_situation02.txt',
-								  'Single_situation03.txt',
-								  'Single_situation04.txt',
-								  'Single_situation05.txt',
-								  'Single_situation06.txt',
-								  'Single_situation07.txt',
-								  'Single_situation08.txt',
-								  'Single_situation09.txt',
-								  'Single_situation10.txt',
-								  'Single_situation11.txt',
-								  'Single_situation12.txt',
-								  'Single_situation13.txt',
-								  'Single_situation14.txt',
-								  'Single_situation15.txt',
-								  'Single_situation16.txt',
-								  'Single_situation17.txt',
-								  'Single_situation18.txt',
-								  'Single_situation19.txt']
-	params.txtPathList = [args.basePath + '/source/' + i for i in params.txtPathListRelative]
-	assert len(params.txtPathList) == params.training.batch_size, f'The number of txt files({len(params.txtPathList)}) should be equal to batch size({params.training.batch_size}).'
 
 	if params.training.device == 'auto':
 		params.training.device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -101,19 +78,10 @@ if __name__ == '__main__':
 		# ------------------------------------------------
 
 	model = MOTT(params)
-	mt3DataConvertor = MT3DataConvertor(params.txtPathList,
-				    					params.data_generation.n_timesteps * params.data_generation.frame_sample_rate,
-										params.training.batch_size,
-										params.data_generation.frame_sample_rate,
-										params.training.device)
-	# txtDataConvertor = TXTDataConvertor(params.txtPathList, params.data_generation.n_timesteps, params.training.batch_size)
+	mt3DataConvertor = MT3DataConvertor(args.task_params, args.model_params)
 	mot_loss = MotLoss(params)
 	contrastive_loss = ContrastiveLoss(params)
 	false_loss = FalseMeasurementLoss(params)
-
-	# plt.figure(figsize=(8, 8), dpi=300)
-	# for i in range(100):
-	# 	txtDataConvertor.plotTrain()
 
 	# Optionally load the model weights from a provided checkpoint
 	if args.continue_training_from is not None:
@@ -356,6 +324,7 @@ if __name__ == '__main__':
 								optimizer=optimizer,
 								scheduler=scheduler)
 			print("[INFO] Exiting...")
+			mt3DataConvertor.fusionDataGenerator.pool.close()
 			exit()
 
 		# Save checkpoint
