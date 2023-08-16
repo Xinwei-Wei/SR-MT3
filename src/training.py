@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import os
+import warnings
 import pdb
 import pickle
 import re
@@ -173,9 +174,32 @@ if __name__ == '__main__':
 
 	for i_gradient_step in range(params.training.n_gradient_steps):
 		try:
-			batch, panValue, labels, unique_ids = mt3DataConvertor.Get_batch()
-			outputs, memory, aux_classifications, queries, attn_maps  = model.forward(batch, panValue, unique_ids)
-			loss_dict, indices = mot_loss.forward(outputs, labels, loss_type=params.loss.type)
+			if DEBUG_MODE:
+				batch, panValue, labels, unique_ids = mt3DataConvertor.Get_batch()
+				outputs, memory, aux_classifications, queries, attn_maps  = model.forward(batch, panValue, unique_ids)
+				loss_dict, indices = mot_loss.forward(outputs, labels, loss_type=params.loss.type)
+			else:
+				try:
+					batch, panValue, labels, unique_ids = mt3DataConvertor.Get_batch()
+					outputs, memory, aux_classifications, queries, attn_maps  = model.forward(batch, panValue, unique_ids)
+					loss_dict, indices = mot_loss.forward(outputs, labels, loss_type=params.loss.type)
+				except Exception:
+					warnings.warn('Some Error Occured while training.')
+					time.sleep(2.0)
+					try:
+						mt3DataConvertor.ResetBias()
+					except Exception:
+						if not DEBUG_MODE:
+							filename = f'checkpoint_gradient_step_{i_gradient_step}'
+							folder_name = os.path.join(logger.log_path, 'checkpoints')
+							save_checkpoint(folder=folder_name,
+											filename=filename,
+											model=model,
+											optimizer=optimizer,
+											scheduler=scheduler)
+						warnings.warn(f'Failed to continue. Current Epoch: {i_gradient_step}.')
+						break
+					continue
 
 			if params.loss.type == 'both':
 				gospa_weight = (i_gradient_step / params.training.n_gradient_steps)**3

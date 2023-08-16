@@ -108,13 +108,14 @@ class FusionDataGenerator:
 	''' Generates Simulation Data of Multi-Sensors.
 
 	'''
-	def __init__(self, filepath:str, evalBS = -1):
+	def __init__(self, filepath:str, training=True, params=None, batchSize=1):
 		self.__filepath = filepath
-		self.params = self.__ReadParams()
-		if evalBS == -1:
-			self.__batchSize:int = self.params['totalArg']['batchSize']
+		self.training = training
+		if params is not None:
+			self.params = params
 		else:
-			self.__batchSize = evalBS
+			self.params = self.__ReadParams()
+		self.__batchSize = batchSize
 		self.pool = multiprocessing.Pool(self.__batchSize)
 
 	def __ReadParams(self) -> dict:
@@ -135,14 +136,18 @@ class FusionDataGenerator:
 		'''
 		# 写入模型
 		self.GetModels()
-		# # 串行计算所有batch
-		# Meas = []
-		# for n in range(self.__batchSize):
-		# 	mea = self.GenMeasurementsK(self.pModel[n], self.tModel[n], self.sModel[n])
-		# 	Meas.append(mea)
-		# return Meas
-		# 并行计算所有batch
-		return self.pool.starmap(self.GenMeasurementsK, zip(self.pModel, self.tModel, self.sModel))
+		
+		if self.training:
+			# 并行计算所有batch
+			return self.pool.starmap(self.GenMeasurementsK, zip(self.pModel, self.tModel, self.sModel))
+		else:
+			# 串行计算所有batch
+			Meas = []
+			for n in range(self.__batchSize):
+				mea = self.GenMeasurementsK(self.pModel[n], self.tModel[n], self.sModel[n])
+				Meas.append(mea)
+			return Meas
+		
 
 	def GetModels(self):
 		''' Generates Platforms, Targets and Sensors Model based on Params.

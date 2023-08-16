@@ -7,14 +7,18 @@ from util.load_config_files import load_yaml_into_dotdict
 from util.misc import NestedTensor
 
 class MT3DataConvertor():
-	def __init__(self, taskPath: str, modelPath: str, evalBS = -1, matPath = 'None') -> None:
+	def __init__(self, taskPath: str, modelPath: str, training=True, params=None, matPath = 'None') -> None:
 		# 从yaml载入超参数
-		self.params = load_yaml_into_dotdict(taskPath)
-		self.params.update(load_yaml_into_dotdict(modelPath))
-		if evalBS == -1:
+		if params is not None:
+			self.params = params
+		else:
+			self.params = load_yaml_into_dotdict(taskPath)
+			self.params.update(load_yaml_into_dotdict(modelPath))
+		self.training = training
+		if self.training:
 			self.__batchSize = int(self.params.training.batch_size)
 		else:
-			self.__batchSize = evalBS
+			self.__batchSize = 1
 		self.__nTimeStep = int(self.params.data_generation.n_timesteps)
 		self.cycle = int(np.floor((self.params.targetArg.tf - self.params.targetArg.t0) * 1000 / self.params.sensorArg.Rect.T) - self.__nTimeStep + 1)
 		self.dt = self.params.data_generation.dt
@@ -25,7 +29,10 @@ class MT3DataConvertor():
 			self.SetEpoch()
 		else:
 			self.useDataFromMAT = False
-			self.fusionDataGenerator = FusionDataGenerator(taskPath, self.__batchSize)
+			if self.training:
+				self.fusionDataGenerator = FusionDataGenerator(taskPath, self.training, None, self.__batchSize)
+			else:
+				self.fusionDataGenerator = FusionDataGenerator(taskPath, self.training, self.params, self.__batchSize)
 			self.ResetBias()
 
 	def SetEpoch(self, epoch = 0):
@@ -43,7 +50,10 @@ class MT3DataConvertor():
 
 		for b in training_data:
 			if b is None:
-				return self.Get_batch()
+				if self.training:
+					return self.Get_batch()
+				else:
+					return None, None, None, None
 
 		labels = [Tensor(l).to(torch.device(self.device)) for l in labels]
 		unique_ids = [list(u) for u in unique_ids]
@@ -66,6 +76,7 @@ class MT3DataConvertor():
 		# 防止全0导致的NaN
 		for i in range(self.__batchSize):
 			if torch.all(training_nested_tensor.tensors[i, :, 2] == 0):
+				print('All targets out of range. Resetting dataset...')
 				self.ResetBias()
 				return self.Get_batch()
 
@@ -141,7 +152,7 @@ class MT3DataConvertor():
 				unique_ids_k  = np.append(unique_ids_k, Z[0].astype(np.int64))
 			# end for
 
-			if int(round(max(training_data_k[:, 2]/self.dt))) < 2:
+			if training_data_k.shape[0] != 0 and int(round(max(training_data_k[:, 2]/self.dt))) < 2:
 				training_data_k = unique_ids_k = None
 			
 			training_data.append(training_data_k)

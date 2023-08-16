@@ -20,7 +20,7 @@ arch:
 
 loss:
     type: 'detr'
-    cutoff_distance: 1000
+    cutoff_distance: 20
     order: 1
     alpha: 2
     c_loss_multiplier: 4

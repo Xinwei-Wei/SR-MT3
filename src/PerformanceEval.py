@@ -43,12 +43,9 @@ class TrackManagement:
 
 class TrackPred:
 
-	def __init__(self, model, timeStep, frameSampleRate, device = 'cuda'):
+	def __init__(self, model, taskPath: str, modelPath: str, params=None, matPath = 'None'):
 		self.__model = model
-		self.__timeStep = timeStep
-		self.__frameSampleRate = frameSampleRate
-		self.__device = device
-		self.mt3DataConvertor = MT3DataConvertor(txtPathList=None, n_timestep=self.__timeStep, batchSize=1, frameSampleRate=self.__frameSampleRate, device=self.__device, training=False)
+		self.mt3DataConvertor = MT3DataConvertor(taskPath, modelPath, training=False, params=params, matPath=matPath)
 
 	def __GetInputMeasurement(self):
 		_, uniqueID, sensorPosMeas, _, targetPosMeas, _ = None	# txtInteracter.ReadFrame()
@@ -100,18 +97,12 @@ class TrackPred:
 
 		return outputState
 	
-	def PredForEval(self, srcFile, epoch, matFile=None):
-		txtInteracter = TXTInteracter(srcFile, training=True)
+	def PredForEval(self, epoch, matFile=None):
 		stateList = []
 		labelList = []
 		for i in range(epoch):
 			# Gen meas data
-			try:
-				_, uniqueID, sensorPosMeas, sensorPosTruth, targetPosMeas, targetPosTruth = txtInteracter.ReadFrame()
-			except IndexError:
-				warnings.warn(f'Source File has no new data, prediction ended. Current Epoch: {i}, Expected Epoch: {epoch}.')
-				break
-			batch, panValue, _, _ = self.mt3DataConvertor.Get_batch([sensorPosMeas, targetPosMeas])
+			batch, panValue, labels, unique_ids = self.mt3DataConvertor.Get_batch()
 
 			if batch is not None:
 				# Predict
@@ -119,23 +110,15 @@ class TrackPred:
 				output_state = output['state'].detach().cpu() + torch.Tensor(panValue)
 				output_logits = output['logits'].detach().cpu().sigmoid().flatten(0,1)
 
-				# Gen ground truth
-				relativeTruth =  targetPosTruth[:, :2] - sensorPosTruth[:2]
-				relativeTruth = np.delete(relativeTruth, uniqueID == -1, 0)
-				uniqueID = np.delete(uniqueID, uniqueID == -1, 0)
-				labels = [torch.Tensor(relativeTruth)]
+				# Gen Ground Truth
+				labels[0] = labels[0].cpu()
+				outputLabel = labels[0].numpy()
 
 				# Associate results
 				permutation_idx, cost = self.compute_hungarian_matching(output_state, None, labels)
 				outIdx, tgtIdx = permutation_idx[0]
 				predIdx = outIdx[torch.argsort(tgtIdx)]
 				outputState = output_state.squeeze()[predIdx].numpy()
-
-				# Sort results
-				outputState = np.c_[uniqueID, outputState]
-				outputState = outputState[np.argsort(uniqueID)]
-				outputLabel = np.c_[uniqueID, relativeTruth]
-				outputLabel = outputLabel[np.argsort(uniqueID)]
 			else:
 				outputState = outputLabel = np.nan
 			
