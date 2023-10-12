@@ -12,7 +12,6 @@ import math
 def _get_clones(module, N):
 	return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
-
 class MOTT(nn.Module):
 	def __init__(self, params):
 		super().__init__()
@@ -26,6 +25,10 @@ class MOTT(nn.Module):
 										  params.arch.d_detections,
 										  normalization_constant=self.measurement_normalization_factor,
 										  normalization_base=-params.data_generation.field_of_view_lb)
+		self.tgtProcessor = MLP(params.arch.d_detections,
+								hidden_dim=params.arch.d_prediction_hidden,
+								output_dim=params.arch.d_model,
+								num_layers=params.arch.n_prediction_layers)
 		encoder_layer = TransformerEncoderLayer(params.arch.d_model,
 												nhead=params.arch.encoder.n_heads,
 												dim_feedforward=params.arch.encoder.dim_feedforward,
@@ -51,6 +54,7 @@ class MOTT(nn.Module):
 									hidden_dim=params.arch.d_prediction_hidden,
 									output_dim=params.arch.d_detections,
 									num_layers=params.arch.n_prediction_layers)
+		self.exProbThresholdCalculator = nn.Linear(params.arch.num_queries//2, 1)
 		self.obj_classifier = nn.Linear(params.arch.d_model, 1)
 		self.aux_loss = params.loss.return_intermediate
 
@@ -92,7 +96,7 @@ class MOTT(nn.Module):
 			self.enc_output_norm = nn.LayerNorm(params.arch.d_model)
 
 			self.pos_trans = nn.Linear(self.d_model * 2, self.d_model * 2)
-			self.pos_trans_norm = nn.LayerNorm(self.d_model * 2)
+			self.pos_trans_norm = nn.LayerNorm(self.d_model)
 
 			self.num_queries = params.arch.num_queries
 			self.reference_points_linear = nn.Linear(params.arch.d_model, 2)
@@ -142,7 +146,6 @@ class MOTT(nn.Module):
 		# Encoder
 		memory = self.encoder(src, src_key_padding_mask=mask, pos=time_encoding)
 
-
 		aux_classifications = {}
 		if self.params.loss.contrastive_classifier:
 			contrastive_classifications = self.contrastive_classifier(memory.permute(1, 0, 2), padding_mask=mask)
@@ -159,41 +162,38 @@ class MOTT(nn.Module):
 			currentPanValue = torch.tensor(panValue, dtype=torch.float32, device=memory.device).unsqueeze(1).repeat(1, topk, 1)
 
 			if self.lastOut is not None:
-				self.lastOut['state'] = self.lastOut['state'] / self.measurement_normalization_factor + self.measurement_normalization_base
-				tgt_mask = self.lastOut['logits'] < self.existThreshold
-
 				topk_last_pred_idx = torch.topk(self.lastOut['logits'], topk, dim=1)[1]
-				topk_last_pred_state = torch.gather(self.lastOut['state'], 1, topk_last_pred_idx.repeat(1, 1, self.d_detections))
-				tgt_mask = torch.gather(tgt_mask, 1, topk_last_pred_idx)
+				topk_last_pred_state = torch.gather(self.lastOut['state'], 1, topk_last_pred_idx.repeat(1, 1, self.d_detections)).detach()
+				topk_last_pred_logit = torch.gather(self.lastOut['logits'], 1, topk_last_pred_idx).sigmoid().detach()
+				topk_last_pred_state = topk_last_pred_state / self.measurement_normalization_factor + self.measurement_normalization_base
+				topk_last_pred_logit = topk_last_pred_logit.squeeze(dim=2)
+
+				# Learned Threshold
+				exProbThreshold = self.exProbThresholdCalculator(topk_last_pred_logit).sigmoid()
+				tgt_mask = topk_last_pred_logit < exProbThreshold
+				# # Fixed Threshold
+				# tgt_mask = topk_last_pred_logit < self.existThreshold
+				# # Flexible Threshold
+				# exProbThresholdFlex = 0.15 * (2 * self.exProbThresholdCalculator(topk_last_pred_logit).sigmoid() - 1)
+				# exProbThreshold = self.existThreshold + exProbThresholdFlex
+				# tgt_mask = topk_last_pred_logit < exProbThreshold
 
 				topk_last_pred_state = topk_last_pred_state + self.lastPanValue - currentPanValue
-				topk_last_pred_state[tgt_mask.repeat(1, 1, self.d_detections)] = -100_000_000
-				topk_last_pred_state = topk_last_pred_state.detach()
-				tgt_mask = tgt_mask.squeeze(dim=2)
+				topk_last_pred_state[tgt_mask.unsqueeze(2).repeat(1, 1, self.d_detections)] = 0
 			else:
-				topk_last_pred_state = (torch.zeros([bs, topk, self.d_detections])-100_000_000).to(memory.device)
+				topk_last_pred_state = (torch.zeros([bs, topk, self.d_detections])).to(memory.device)
 				tgt_mask = torch.ones([bs, topk]).bool().to(memory.device)
 
 			self.lastPanValue = currentPanValue
-			topk_coords_unact = topk_last_pred_state
-
-			pos_trans_out = self.pos_trans_norm(self.pos_trans(self.get_proposal_pos_embed(topk_coords_unact)))
-			query_embed_tgt, tgt = torch.split(pos_trans_out, c, dim=2)
-			query_embed_tgt = query_embed_tgt.permute(1, 0, 2)
-
-			# TODO Judge if query_embed should be changed.
-			query_embed = torch.cat((query_embed_tgt, query_embed[topk:]), axis=0)
-
-			# reference_points = topk_coords_unact.sigmoid()
-			
+			tgt = self.pos_trans_norm(self.tgtProcessor(topk_last_pred_state))
 			tgt = torch.cat((tgt, torch.zeros_like(tgt)), axis = 1)
 			tgt_mask = torch.cat((tgt_mask, torch.zeros([bs, topk]).bool().to(memory.device)), axis=1)
-			reference_points = self.reference_points_linear(query_embed).sigmoid()
 			tgt = tgt.permute(1, 0, 2)
 		else:
 			tgt = torch.zeros_like(query_embed)
-			reference_points = self.reference_points_linear(query_embed).sigmoid()
+			tgt_mask = None
 
+		reference_points = self.reference_points_linear(query_embed).sigmoid()
 		init_reference = reference_points.permute(1, 0, 2)
 
 		hs, attn_maps, inter_references = self.decoder(tgt, memory, tgt_key_padding_mask=tgt_mask, memory_key_padding_mask=mask, pos=time_encoding, query_pos=query_embed, reference_points=reference_points)
@@ -239,4 +239,3 @@ class MOTT(nn.Module):
 		super().to(device)
 		if self.params.loss.contrastive_classifier:
 			self.contrastive_classifier.to(device)
-		

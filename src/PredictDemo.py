@@ -18,4 +18,4 @@ print(f'Evaluating results from folder: {args.result_filepath}...')
 model, params = super_load(args.result_filepath, verbose=True)
 trackPred = TrackPred(model, None, None, params)
 
-pred, truth = trackPred.PredForEval(epoch=20000, matFile=None)
+pred, truth, meas, clutter = trackPred.PredForEval(epoch=30000, matFile=None)

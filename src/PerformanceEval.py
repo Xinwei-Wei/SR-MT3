@@ -100,6 +100,8 @@ class TrackPred:
 	def PredForEval(self, epoch, matFile=None):
 		stateList = []
 		labelList = []
+		measList = []
+		clutterList = []
 		for i in range(epoch):
 			# Gen meas data
 			batch, panValue, labels, unique_ids = self.mt3DataConvertor.Get_batch()
@@ -119,19 +121,33 @@ class TrackPred:
 				outIdx, tgtIdx = permutation_idx[0]
 				predIdx = outIdx[torch.argsort(tgtIdx)]
 				outputState = output_state.squeeze()[predIdx].numpy()
+
+				# Store Measurements
+				meas = batch.tensors[0].cpu().numpy()
+				uids = unique_ids[0].cpu().numpy()
+				currentIdx = meas[:, -1] == np.max(meas[:, -1])
+				clutterIdx = uids == -1
+				currentMeas = meas[~clutterIdx & currentIdx, :-1]
+				currentClutter = meas[clutterIdx & currentIdx, :-1]
 			else:
-				outputState = outputLabel = np.nan
+				outputState = outputLabel= currentMeas = currentClutter = np.nan
 			
 			stateList.append(outputState)
 			labelList.append(outputLabel)
+			measList.append(currentMeas)
+			clutterList.append(currentClutter)
+
+			if (i+1) % (epoch // 100) == 0:
+				print(f'Predicting Epoch {i+1}/{epoch}, {(i+1) // (epoch // 100)}% Completed.')
 
 		if matFile is not None:
 			try:
-				scio.savemat(matFile, {'Predict': stateList, 'Truth': labelList})
+				scio.savemat(matFile, {'Predict': stateList, 'Truth': labelList, 'Measurement': measList, 'Clutter': clutterList})
+				print(f'MAT File saved to {matFile}.')
 			except Exception:
 				warnings.warn('Error occured, CANNOT save MAT file, please save the returned data manually.')
 		
-		return stateList, labelList
+		return stateList, labelList, measList, clutterList
 	
 	def compute_hungarian_matching(self, output_state, output_logits, targets):
 		""" Performs the matching
