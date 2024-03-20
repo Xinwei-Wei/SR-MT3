@@ -8,13 +8,11 @@ import re
 import shutil
 import time
 from collections import deque
-
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from util.MT3DataConvertor import MT3DataConvertor
 from matplotlib.gridspec import GridSpec
-from modules import evaluator
 from modules.contrastive_loss import ContrastiveLoss
 from modules.loss import FalseMeasurementLoss, MotLoss
 from modules.models.mt3.mt3 import MOTT
@@ -34,14 +32,11 @@ DEBUG_MODE = False
 if __name__ == '__main__':
 	# Load CLI arguments
 	parser = argparse.ArgumentParser()
-	parser.add_argument('-mp', '--model_params', help='filepath to configuration yaml file defining the model')
+	parser.add_argument('-tp', '--task_params', default='')
+	parser.add_argument('-mp', '--model_params', default='')
 	parser.add_argument('--continue_training_from', help='filepath to folder of an experiment to continue training from')
 	parser.add_argument('--exp_name', help='Name to give to the results folder')
 	args = parser.parse_args()
-	args.basePath =  os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-	args.task_params = args.basePath  + '/configs/tasks/' + 'scen1.1.yaml'
-	args.model_params = args.basePath  + '/configs/models/' + 'mt3.pro.yaml'
-	# args.continue_training_from = args.basePath + '/src/results/' + ''
 	print(f'Task configuration file: {args.task_params}')
 	print(f'Model configuration file: {args.model_params}')
 

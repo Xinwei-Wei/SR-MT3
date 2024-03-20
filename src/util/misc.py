@@ -97,7 +97,7 @@ def inverse_sigmoid(x, eps=1e-5):
 
 def super_load(experiment_path, checkpoint_filename=None, src_path_suffix=None, verbose=False):
     if src_path_suffix is None:
-        src_path = os.path.join(experiment_path, 'code_used', 'MTT-Trans', 'src')
+        src_path = os.path.join(experiment_path, 'code_used', 'SR-MT3', 'src')
     else:
         src_path = os.path.join(experiment_path, src_path_suffix)
     params_path = os.path.join(experiment_path, 'code_used')
